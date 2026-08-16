@@ -1,0 +1,13 @@
+-- The previous migration renamed budgets.fuel -> budgets.allowances but
+-- only renamed the column, not the data: pre-existing rows (created before
+-- onboarding existed, seeded from the old hardcoded DEFAULT_LEDGER_STATE)
+-- still hold the legacy fuel shape — a single object
+-- {allowance, usageItems, cashoutItems} — where the app now expects an
+-- array of allowance instances. Spreading that object throws
+-- "is not iterable" in dashboard/page.tsx.
+--
+-- These rows predate household_settings/onboarding entirely, so there's
+-- nothing worth reconciling — delete them and let dashboard/page.tsx's
+-- existing "no row for this month -> seed from household_settings" path
+-- regenerate them correctly on next load.
+delete from budgets where jsonb_typeof(allowances) != 'array';

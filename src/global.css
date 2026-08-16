@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens. NativeWind only recognizes two variable-override selectors
+ * on native: bare `:root` (the base/default values) and `.dark:root` (the
+ * override applied when the active color scheme is dark). There's no
+ * special "light" selector — light IS the base `:root` block. Dark is our
+ * app's actual default, so lib/theme/ThemeProvider.tsx calls
+ * `colorScheme.set("dark")` on first launch (no stored member preference)
+ * to activate the `.dark:root` block below rather than flipping the
+ * polarity of these variables.
+ */
+:root {
+  --color-bg: 246 247 250; /* #F6F7FA */
+  --color-card: 255 255 255; /* #FFFFFF */
+  --color-card2: 240 242 246; /* #F0F2F6 */
+  --color-input: 237 239 244; /* #EDEFF4 */
+  --color-fill: 227 230 236; /* #E3E6EC */
+  --color-fill2: 207 211 220; /* #CFD3DC */
+  --color-text: 26 28 34; /* #1A1C22 */
+  --color-text2: 58 62 72; /* #3A3E48 */
+  --color-muted: 102 107 122; /* #666B7A */
+  --color-muted2: 138 143 156; /* #8A8F9C */
+  --color-faint: 168 173 184; /* #A8ADB8 */
+  --color-line: 20 22 28; /* hairline border, use at low opacity e.g. border-line/10 */
+  --color-gold: 169 118 28; /* #A9761C */
+  --color-on-gold: 255 255 255; /* #FFFFFF */
+  --color-positive: 46 158 99; /* #2E9E63 */
+  --color-negative: 196 70 47; /* #C4462F */
+  --color-info: 43 127 176; /* #2B7FB0 */
+}
+
+.dark:root {
+  --color-bg: 16 18 24; /* #101218 */
+  --color-card: 23 26 33; /* #171A21 */
+  --color-card2: 20 23 32; /* #141720 */
+  --color-input: 27 30 39; /* #1B1E27 */
+  --color-fill: 34 38 47; /* #22262F */
+  --color-fill2: 42 46 56; /* #2A2E38 */
+  --color-text: 237 238 242; /* #EDEEF2 */
+  --color-text2: 201 205 216; /* #C9CDD8 */
+  --color-muted: 139 143 160; /* #8B8FA0 */
+  --color-muted2: 92 96 112; /* #5C6070 */
+  --color-faint: 74 78 92; /* #4A4E5C */
+  --color-line: 237 238 242; /* hairline border, use at low opacity e.g. border-line/10 */
+  --color-gold: 217 164 65; /* #D9A441 */
+  --color-on-gold: 16 18 24; /* #101218 */
+  --color-positive: 111 207 151; /* #6FCF97 */
+  --color-negative: 224 102 79; /* #E0664F */
+  --color-info: 79 166 217; /* #4FA6D9 */
+}
