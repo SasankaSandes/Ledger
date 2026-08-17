@@ -196,6 +196,28 @@ export function cashInHand(pots: PotRow[]): number {
   return pots.filter((p) => p.cashable).reduce((s, p) => s + sumItems(p.cashoutItems), 0);
 }
 
+export function debtBalance(debt: Debt): number {
+  return Math.max(0, Number(debt.amount || 0) - sumItems(debt.repayments));
+}
+
+export function totalOwed(debts: Debt[]): number {
+  return debts.filter((d) => !d.paidAt).reduce((s, d) => s + debtBalance(d), 0);
+}
+
+// Unlike potRemaining, intentionally NOT clamped to zero — over-usage
+// should show as a negative "Left this year" figure, not silently floor.
+export function annualRemaining(a: AnnualAllowanceInstance): number {
+  return a.amount - sumItems(a.usageItems) - sumItems(a.cashoutItems);
+}
+
+// Same shape as cashoutRoom, minus the `cashable` gate — annual allowances
+// always support cash-out.
+export function annualCashoutRoom(a: AnnualAllowanceInstance): number {
+  const cashedSoFar = sumItems(a.cashoutItems);
+  const capRoom = a.cashoutCap != null ? Math.max(0, a.cashoutCap - cashedSoFar) : Infinity;
+  return Math.max(0, Math.min(capRoom, annualRemaining(a)));
+}
+
 // How much of salary is committed to fixed expenses and pot caps. Annual
 // allowances are excluded — they're a separate yearly pool, not a draw
 // against this period's salary. Works against both HouseholdSettings and
@@ -327,20 +349,30 @@ export function debtFromRow(row: {
   amount: number;
   date: string;
   paid_at: string | null;
+  repayments: BudgetItem[];
 }): Debt {
-  return { id: row.id, name: row.name, amount: row.amount, date: row.date, paidAt: row.paid_at };
+  return {
+    id: row.id,
+    name: row.name,
+    amount: row.amount,
+    date: row.date,
+    paidAt: row.paid_at,
+    repayments: row.repayments,
+  };
 }
 
 // Money owed to someone else — a loan taken, a bill they covered for you.
 // Not period-scoped, persists until paid. Taking one acts like a top-up
-// (the money is spendable now); marking it paid is a negative top-up
-// (repaying it leaves this period's spending money). Partial installment
-// repayment is a Roadmap item — this milestone keeps the existing
-// full-payment-only shape.
+// (the money is spendable now); each repayment is a negative top-up for
+// just that installment. paidAt is set automatically once
+// sum(repayments) reaches amount — there's no separate "mark paid"
+// action, Money's "Pay all" is just a repayment for the full remaining
+// balance.
 export type Debt = {
   id: string;
   name: string;
   amount: number;
   date: string;
   paidAt: string | null;
+  repayments: BudgetItem[]; // always positive; balance = amount - sum(repayments)
 };

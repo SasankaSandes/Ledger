@@ -4,6 +4,7 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { AmountInput } from "@/components/ui/AmountInput";
 import { AllocationSummary } from "@/components/manage/AllocationSummary";
+import { AnnualAllowanceEditor } from "@/components/manage/AnnualAllowanceEditor";
 import { FixedExpenseEditor } from "@/components/manage/FixedExpenseEditor";
 import { PotEditor } from "@/components/manage/PotEditor";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
@@ -25,7 +26,7 @@ const THEME_OPTIONS: { key: ThemePreference; label: string }[] = [
 ];
 
 export default function ManageScreen() {
-  const { householdId, settings: initialSettings } = useHousehold();
+  const { householdId, settings: initialSettings, refresh } = useHousehold();
   const { preference, setPreference } = useTheme();
   const [settings, setSettings] = useState<HouseholdSettings>(initialSettings);
   const [saving, setSaving] = useState(false);
@@ -63,9 +64,13 @@ export default function ManageScreen() {
           .eq("household_id", householdId)
           .eq("month", current.month);
       }
+      // Keeps HouseholdProvider's cached settings current — without this,
+      // a freshly-added annual allowance (or pot/fixed item) wouldn't show
+      // up on Money/Home until a full app reload.
+      await refresh();
       setSaving(false);
     },
-    [householdId]
+    [householdId, refresh]
   );
 
   const update = (next: HouseholdSettings) => {
@@ -128,6 +133,16 @@ export default function ManageScreen() {
               Fixed expenses
             </Text>
             <FixedExpenseEditor items={settings.fixed} onChange={(fixed) => update({ ...settings, fixed })} />
+          </View>
+
+          <View>
+            <Text className="mb-2 text-[11px] font-body-semibold uppercase tracking-wider text-muted">
+              Annual allowances
+            </Text>
+            <AnnualAllowanceEditor
+              items={settings.annualAllowances}
+              onChange={(annualAllowances) => update({ ...settings, annualAllowances })}
+            />
           </View>
 
           <View>

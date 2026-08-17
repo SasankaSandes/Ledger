@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { TodaySummaryCard } from "@/components/home/TodaySummaryCard";
@@ -62,6 +62,16 @@ export default function HomeScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [householdId]);
 
+  // Money (savings/debts) can write top-ups to this same open period while
+  // Home sits in the background — re-load on every focus so state.topUps
+  // (and everything derived from it) doesn't go stale, which matters most
+  // right before Close Period computes what to carry forward.
+  useFocusEffect(
+    useCallback(() => {
+      loadPeriod();
+    }, [loadPeriod])
+  );
+
   const persist = useCallback(
     async (next: LedgerState) => {
       if (!householdId || !month) return;
@@ -69,10 +79,14 @@ export default function HomeScreen() {
       await supabase
         .from("budgets")
         .update({
+          // top_ups deliberately omitted: Home never mutates top-ups itself
+          // (only reads them), and Money's savings/debts actions write to
+          // this same column independently. Including a stale local copy
+          // here would clobber whatever Money most recently wrote — see
+          // SavingsSection/DebtsSection.
           salary: next.salary,
           fixed: next.fixed,
           pots: next.pots,
-          top_ups: next.topUps,
           updated_at: new Date().toISOString(),
         })
         .eq("household_id", householdId)

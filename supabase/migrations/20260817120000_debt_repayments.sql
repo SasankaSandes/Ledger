@@ -1,0 +1,11 @@
+-- Partial installment debt repayment.
+--
+-- Debts were full-payment-only ({id, name, amount, date, paid_at}) — a debt
+-- was either fully outstanding or fully settled via a single negative
+-- top-up for the whole amount. This adds itemized repayments, same shape
+-- as every other item list, so a debt can be paid down over several
+-- installments. paid_at is still set automatically, now when
+-- sum(repayments) reaches amount rather than via a manual "mark paid".
+--
+-- No production data exists in this table yet, so no backfill needed.
+alter table debts add column repayments jsonb not null default '[]';
