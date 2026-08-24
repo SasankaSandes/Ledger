@@ -45,11 +45,18 @@ export default function RootLayout() {
 // any route, so there's no flash of the wrong screen or the wrong theme.
 function ThemedRoot() {
   const { loading: authLoading, session } = useAuth();
-  const { loading: householdLoading, onboarded, themePreference, setThemePreference } = useHousehold();
+  const {
+    loading: householdLoading,
+    householdId,
+    onboarded,
+    themePreference,
+    setThemePreference,
+  } = useHousehold();
 
   if (authLoading || householdLoading) return null;
 
   const signedIn = !!session;
+  const hasHousehold = !!householdId;
 
   return (
     <ThemeProvider initialPreference={themePreference} onPreferenceChange={setThemePreference}>
@@ -58,11 +65,19 @@ function ThemedRoot() {
           <Stack.Screen name="login" />
         </Stack.Protected>
 
-        <Stack.Protected guard={signedIn && !onboarded}>
+        {/* Reachable via leave/removal, not just brand-new signups (those
+            always get a household from handle_new_user()) — without this
+            guard, a null householdId would fall through to onboarding,
+            whose finish() silently no-ops without one. */}
+        <Stack.Protected guard={signedIn && !hasHousehold}>
+          <Stack.Screen name="no-household" />
+        </Stack.Protected>
+
+        <Stack.Protected guard={signedIn && hasHousehold && !onboarded}>
           <Stack.Screen name="onboarding" />
         </Stack.Protected>
 
-        <Stack.Protected guard={signedIn && onboarded}>
+        <Stack.Protected guard={signedIn && hasHousehold && onboarded}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="quick-add" options={{ presentation: "modal" }} />
         </Stack.Protected>

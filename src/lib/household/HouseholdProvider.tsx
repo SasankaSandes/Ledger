@@ -40,7 +40,13 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
     }
     const membership = await getMyMembership(supabase, session.user.id);
     if (!membership) {
+      // Reachable mid-session now (leave/removal), not just at sign-out —
+      // reset every field, not just householdId, so a stale role/theme/
+      // onboarded from the old household can't leak into the next one.
       setHouseholdId(null);
+      setRole(null);
+      setThemePreferenceState("dark");
+      setOnboarded(false);
       setLoading(false);
       return;
     }

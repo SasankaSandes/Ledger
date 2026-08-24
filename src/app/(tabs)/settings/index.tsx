@@ -9,6 +9,7 @@ import { useTheme } from "@/lib/theme/ThemeProvider";
 import { supabase } from "@/lib/supabase/client";
 import { confirmAction } from "@/lib/confirm";
 import { ensureOpenPeriod, startNewMonth } from "@/lib/period";
+import { getHouseholdMemberCount } from "@/lib/supabase/queries";
 import {
   TRANSACTION_COLUMNS,
   monthBalance,
@@ -24,33 +25,39 @@ const THEME_OPTIONS: { key: ThemePreference; label: string }[] = [
   { key: "dark", label: "Dark" },
 ];
 
-const NAV_ROWS: { label: string; subtitle: string; route: string }[] = [
-  { label: "Categories", subtitle: "Cash In / Cash Out tags", route: "/settings/categories" },
-  { label: "Pots", subtitle: "Budgets with spend limits", route: "/settings/pots-editor" },
-  { label: "Fixed expenses", subtitle: "Recurring monthly costs", route: "/settings/fixed-expenses" },
-  { label: "Household", subtitle: "Just you", route: "/settings/household" },
-];
-
 export default function SettingsScreen() {
   const { householdId } = useHousehold();
   const { preference, setPreference } = useTheme();
   const { signOut } = useAuth();
   const [period, setPeriod] = useState<Period | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [memberCount, setMemberCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!householdId) return;
     setLoading(true);
     const openPeriod = await ensureOpenPeriod(supabase, householdId);
-    const { data } = await supabase
-      .from("transactions")
-      .select(TRANSACTION_COLUMNS)
-      .eq("period_id", openPeriod.id);
+    const [{ data }, count] = await Promise.all([
+      supabase.from("transactions").select(TRANSACTION_COLUMNS).eq("period_id", openPeriod.id),
+      getHouseholdMemberCount(supabase, householdId),
+    ]);
     setPeriod(openPeriod);
     setTransactions((data ?? []).map(transactionFromRow));
+    setMemberCount(count);
     setLoading(false);
   }, [householdId]);
+
+  const navRows: { label: string; subtitle: string; route: string }[] = [
+    { label: "Categories", subtitle: "Cash In / Cash Out tags", route: "/settings/categories" },
+    { label: "Pots", subtitle: "Budgets with spend limits", route: "/settings/pots-editor" },
+    { label: "Fixed expenses", subtitle: "Recurring monthly costs", route: "/settings/fixed-expenses" },
+    {
+      label: "Household",
+      subtitle: !memberCount || memberCount <= 1 ? "Just you" : `${memberCount} members`,
+      route: "/settings/household",
+    },
+  ];
 
   useEffect(() => {
     load();
@@ -84,7 +91,7 @@ export default function SettingsScreen() {
         <Text className="mb-5 font-display text-[22px] text-text">Settings</Text>
 
         <View className="gap-2">
-          {NAV_ROWS.map((row) => (
+          {navRows.map((row) => (
             <Pressable
               key={row.route}
               onPress={() => router.push(row.route as never)}
