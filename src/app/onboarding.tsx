@@ -1,49 +1,63 @@
 import { useState } from "react";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
-import { AmountInput } from "@/components/ui/AmountInput";
-import { AllocationSummary } from "@/components/manage/AllocationSummary";
-import { FixedExpenseEditor } from "@/components/manage/FixedExpenseEditor";
+import { CategoryEditor } from "@/components/manage/CategoryEditor";
 import { PotEditor } from "@/components/manage/PotEditor";
+import { FixedExpenseEditor } from "@/components/manage/FixedExpenseEditor";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
-import { EMPTY_HOUSEHOLD_SETTINGS, householdSettingsToRow, type HouseholdSettings } from "@/lib/types";
+import { ensureOpenPeriod } from "@/lib/period";
+import type { Category, FixedExpenseDef, Pot } from "@/lib/types";
 
-const STEPS: { key: "salary" | "fixed" | "pots"; blurb: string }[] = [
-  { key: "salary", blurb: "What do you take home each period?" },
-  { key: "fixed", blurb: "Rent, loans, subscriptions — anything that costs the same amount every period." },
+const STEPS: { key: "categories" | "pots" | "fixed"; blurb: string }[] = [
+  {
+    key: "categories",
+    blurb:
+      "Tags for organizing and filtering money — where it comes from (Salary, Freelance) and where it goes (Groceries, Rent). Add as many of each as you like.",
+  },
   {
     key: "pots",
-    blurb:
-      "Spending pots for things you want to track and cap, like groceries or eating out — optional. Don't know your limits yet? Skip this; Ledger will suggest caps from how you actually spend.",
+    blurb: "Pots are budgets — a name and a spend limit. Assign any Cash Out transaction to one when you log it.",
+  },
+  {
+    key: "fixed",
+    blurb: "Rent, loans, subscriptions — anything that costs about the same every month, linked to a category.",
   },
 ];
 
+// Each step reuses the same Manage editors verbatim — categories, pots, and
+// fixed expenses are real rows now, so every add here already writes
+// straight to Supabase. finish() just flips onboarded_at and opens the
+// first period.
 export default function OnboardingScreen() {
   const { householdId, refresh } = useHousehold();
-  const [settings, setSettings] = useState<HouseholdSettings>(EMPTY_HOUSEHOLD_SETTINGS);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [pots, setPots] = useState<Pot[]>([]);
+  const [fixedExpenses, setFixedExpenses] = useState<FixedExpenseDef[]>([]);
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isLast = step === STEPS.length - 1;
+  const outCategories = categories.filter((c) => c.type === "out");
 
   const finish = async () => {
     if (!householdId) return;
     setSaving(true);
     setError(null);
-    const { error } = await supabase.from("household_settings").upsert(
-      { household_id: householdId, ...householdSettingsToRow(settings), onboarded_at: new Date().toISOString() },
-      { onConflict: "household_id" }
-    );
-    if (error) {
-      setError(error.message);
+    try {
+      const { error: upsertError } = await supabase
+        .from("household_settings")
+        .upsert({ household_id: householdId, onboarded_at: new Date().toISOString() }, { onConflict: "household_id" });
+      if (upsertError) throw upsertError;
+      await ensureOpenPeriod(supabase, householdId);
+      // Flips `onboarded` in HouseholdProvider, which lets the root layout's
+      // Stack.Protected guard transition into (tabs) automatically.
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
       setSaving(false);
-      return;
     }
-    // Flips `onboarded` in HouseholdProvider, which lets the root layout's
-    // Stack.Protected guard transition into (tabs) automatically.
-    await refresh();
   };
 
   return (
@@ -57,42 +71,22 @@ export default function OnboardingScreen() {
         <View className="mb-[18px] gap-4 rounded-2xl border border-line/10 bg-card px-5 py-[22px]">
           <Text className="text-[12.5px] text-muted">{STEPS[step].blurb}</Text>
 
-          {STEPS[step].key === "salary" && (
-            <View className="gap-4">
-              <View>
-                <Text className="mb-1.5 text-[11.5px] text-muted">Monthly salary</Text>
-                <AmountInput
-                  value={settings.salary}
-                  onChange={(n) => setSettings({ ...settings, salary: n ?? 0 })}
-                  className="w-[140px] rounded-lg border border-line/10 bg-input px-2.5 py-2 text-left font-mono text-[18px] text-text"
-                />
-              </View>
-              <View>
-                <Text className="mb-1.5 text-[11.5px] text-muted">
-                  Salary date — the day of the month a new period starts
-                </Text>
-                <TextInput
-                  value={String(settings.salaryDate)}
-                  onChangeText={(t) => {
-                    const n = Math.min(31, Math.max(1, Number(t.replace(/[^0-9]/g, "")) || 1));
-                    setSettings({ ...settings, salaryDate: n });
-                  }}
-                  inputMode="numeric"
-                  className="w-14 rounded-lg border border-line/10 bg-input px-2 py-[7px] text-center font-mono text-[14px] text-text"
-                />
-              </View>
-            </View>
+          {STEPS[step].key === "categories" && householdId && (
+            <CategoryEditor householdId={householdId} items={categories} onChange={setCategories} />
           )}
 
-          {STEPS[step].key === "fixed" && (
-            <FixedExpenseEditor items={settings.fixed} onChange={(fixed) => setSettings({ ...settings, fixed })} />
+          {STEPS[step].key === "pots" && householdId && (
+            <PotEditor householdId={householdId} items={pots} onChange={setPots} />
           )}
 
-          {STEPS[step].key === "pots" && (
-            <PotEditor items={settings.pots} onChange={(pots) => setSettings({ ...settings, pots })} />
+          {STEPS[step].key === "fixed" && householdId && (
+            <FixedExpenseEditor
+              householdId={householdId}
+              outCategories={outCategories}
+              items={fixedExpenses}
+              onChange={setFixedExpenses}
+            />
           )}
-
-          <AllocationSummary settings={settings} />
         </View>
 
         {error && <Text className="mb-3 text-[12.5px] text-negative">{error}</Text>}
@@ -114,7 +108,7 @@ export default function OnboardingScreen() {
               style={{ opacity: saving ? 0.7 : 1 }}
             >
               <Text className="font-body-semibold text-[14px] text-on-gold">
-                {saving ? "Setting up…" : "Start my first period"}
+                {saving ? "Setting up…" : "Start my first month"}
               </Text>
             </Pressable>
           ) : (

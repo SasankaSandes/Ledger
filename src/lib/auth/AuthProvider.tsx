@@ -1,13 +1,18 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase/client";
 
 type AuthContextValue = {
   session: Session | null;
   loading: boolean;
+  signOut: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthContextValue>({ session: null, loading: true });
+const AuthContext = createContext<AuthContextValue>({
+  session: null,
+  loading: true,
+  signOut: async () => {},
+});
 
 // React Native has no server/middleware to gate routes the way proxy.ts did
 // on the web. Route-group layouts ((auth)/_layout.tsx, (tabs)/_layout.tsx,
@@ -31,7 +36,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  return <AuthContext.Provider value={{ session, loading }}>{children}</AuthContext.Provider>;
+  const signOut = useCallback(async () => {
+    await supabase.auth.signOut();
+  }, []);
+
+  return <AuthContext.Provider value={{ session, loading, signOut }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

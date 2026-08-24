@@ -2,24 +2,26 @@ import { useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { supabase } from "@/lib/supabase/client";
 import { confirmAction } from "@/lib/confirm";
-import { potFromRow, type Pot } from "@/lib/types";
-import { AmountInput } from "@/components/ui/AmountInput";
+import { categoryFromRow, type Category } from "@/lib/types";
 
 const RENAME_DEBOUNCE_MS = 500;
 
-// Pots are budgets — a name and a spend limit, structurally independent of
-// categories. Which categories' transactions count against a pot is chosen
-// per transaction (Quick Add's optional pot picker), not configured here.
-export function PotEditor({
+// One combined list for both Cash In and Cash Out categories — pure
+// organizing/filtering tags, no limit (budgeting lives on Pot, a separate
+// entity edited elsewhere). Every edit here writes directly to Supabase,
+// with the parent's `items`/`onChange` kept only for optimistic local
+// state.
+export function CategoryEditor({
   householdId,
   items,
   onChange,
 }: {
   householdId: string;
-  items: Pot[];
-  onChange: (next: Pot[]) => void;
+  items: Category[];
+  onChange: (next: Category[]) => void;
 }) {
   const [newName, setNewName] = useState("");
+  const [newType, setNewType] = useState<"in" | "out">("out");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const renameTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -30,16 +32,16 @@ export function PotEditor({
     setAdding(true);
     setError(null);
     const { data, error: insertError } = await supabase
-      .from("pots")
-      .insert({ household_id: householdId, name, spend_limit: 0 })
-      .select("id, household_id, name, spend_limit, archived_at")
+      .from("categories")
+      .insert({ household_id: householdId, name, type: newType })
+      .select("id, household_id, name, type, archived_at")
       .single();
     setAdding(false);
     if (insertError || !data) {
-      setError(insertError?.message ?? "Couldn't add pot.");
+      setError(insertError?.message ?? "Couldn't add category.");
       return;
     }
-    onChange([...items, potFromRow(data)]);
+    onChange([...items, categoryFromRow(data)]);
     setNewName("");
   };
 
@@ -52,33 +54,36 @@ export function PotEditor({
     if (renameTimers.current[id]) clearTimeout(renameTimers.current[id]);
     renameTimers.current[id] = setTimeout(async () => {
       const { error: updateError } = await supabase
-        .from("pots")
+        .from("categories")
         .update({ name, updated_at: new Date().toISOString() })
         .eq("id", id);
       if (updateError) setError(updateError.message);
     }, RENAME_DEBOUNCE_MS);
   };
 
-  const setSpendLimit = async (id: string, spendLimit: number) => {
-    onChange(items.map((it) => (it.id === id ? { ...it, spendLimit } : it)));
+  const setType = async (id: string, type: "in" | "out") => {
+    onChange(items.map((it) => (it.id === id ? { ...it, type } : it)));
     const { error: updateError } = await supabase
-      .from("pots")
-      .update({ spend_limit: spendLimit, updated_at: new Date().toISOString() })
+      .from("categories")
+      .update({ type, updated_at: new Date().toISOString() })
       .eq("id", id);
     if (updateError) setError(updateError.message);
   };
 
+  // Soft-delete: archived categories drop out of pickers everywhere but
+  // stay visible (grayed out) in Activity history/filters for whatever
+  // transactions already reference them.
   const archive = async (id: string) => {
     onChange(items.filter((it) => it.id !== id));
     const { error: updateError } = await supabase
-      .from("pots")
+      .from("categories")
       .update({ archived_at: new Date().toISOString() })
       .eq("id", id);
     if (updateError) setError(updateError.message);
   };
 
-  const confirmArchive = (item: Pot) => {
-    confirmAction(`Remove "${item.name}"?`, "Past transactions keep it, but it'll disappear from pickers.", "Remove", () =>
+  const confirmArchive = (item: Category) => {
+    confirmAction(`Remove "${item.name}"?`, "It'll disappear from pickers, but past transactions keep it.", "Remove", () =>
       archive(item.id)
     );
   };
@@ -93,25 +98,46 @@ export function PotEditor({
             onChangeText={(name) => rename(it.id, name)}
             className="flex-1 font-body-medium text-[13.5px] text-text"
           />
-          <AmountInput
-            value={it.spendLimit}
-            onChange={(n) => setSpendLimit(it.id, n ?? 0)}
-            className="w-[92px] rounded-lg border border-line/10 bg-input px-2.5 py-[7px] text-right font-mono text-[12.5px] text-text"
-          />
+          <View className="flex-row gap-1 rounded-lg bg-input p-0.5">
+            {(["in", "out"] as const).map((t) => (
+              <Pressable
+                key={t}
+                onPress={() => setType(it.id, t)}
+                className={`rounded px-2 py-1 ${it.type === t ? "bg-fill" : ""}`}
+              >
+                <Text className={`text-[10px] ${it.type === t ? "text-text" : "text-muted2"}`}>
+                  {t === "in" ? "In" : "Out"}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
           <Pressable onPress={() => confirmArchive(it)} hitSlop={8}>
             <Text className="px-0.5 text-[15px] text-faint">×</Text>
           </Pressable>
         </View>
       ))}
-      <View className="flex-row gap-1.5">
+      <View className="flex-row items-center gap-1.5">
         <TextInput
           value={newName}
           onChangeText={setNewName}
-          placeholder="New pot"
+          placeholder="New category"
           placeholderTextColor="#5C6070"
           onSubmitEditing={add}
           className="flex-1 rounded-lg border border-line/10 bg-input px-3 py-2.5 text-[12.5px] text-text"
         />
+        <View className="flex-row gap-1 rounded-lg bg-input p-0.5">
+          {(["in", "out"] as const).map((t) => (
+            <Pressable
+              key={t}
+              onPress={() => setNewType(t)}
+              className={`rounded px-2 py-1.5 ${newType === t ? "bg-fill" : ""}`}
+            >
+              <Text className={`text-[10.5px] ${newType === t ? "text-text" : "text-muted2"}`}>
+                {t === "in" ? "In" : "Out"}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
         <Pressable onPress={add} className="w-11 items-center justify-center rounded-lg bg-fill">
           <Text className="text-[16px] text-gold">+</Text>
         </Pressable>

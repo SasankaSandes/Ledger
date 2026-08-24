@@ -1,5 +1,4 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { EMPTY_HOUSEHOLD_SETTINGS, householdSettingsFromRow, type HouseholdSettings } from "@/lib/types";
 import type { ThemePreference } from "@/lib/theme/tokens";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -44,16 +43,15 @@ export async function setMyThemePreference(
   if (error) throw error;
 }
 
-export async function getHouseholdSettings(
-  supabase: Client,
-  householdId: string
-): Promise<{ settings: HouseholdSettings; onboarded: boolean }> {
+// Categories/fixed expenses/periods/transactions are real tables now, loaded
+// per-screen rather than centrally cached — household_settings only still
+// answers "has this household finished onboarding."
+export async function getOnboarded(supabase: Client, householdId: string): Promise<boolean> {
   const { data, error } = await supabase
     .from("household_settings")
-    .select("salary, salary_date, fixed, pots, annual_allowances, onboarded_at")
+    .select("onboarded_at")
     .eq("household_id", householdId)
     .maybeSingle();
   if (error) throw error;
-  if (!data) return { settings: EMPTY_HOUSEHOLD_SETTINGS, onboarded: false };
-  return { settings: householdSettingsFromRow(data), onboarded: !!data.onboarded_at };
+  return !!data?.onboarded_at;
 }

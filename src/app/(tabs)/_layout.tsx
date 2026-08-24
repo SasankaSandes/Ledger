@@ -1,7 +1,8 @@
 import { Pressable, Text, View } from "react-native";
 import { router, Tabs } from "expo-router";
 import { useColorScheme } from "nativewind";
-import { darkTokens, lightTokens, withAlpha } from "@/lib/theme/tokens";
+import { darkTokens, lightTokens, tabBarStyle } from "@/lib/theme/tokens";
+import { ActivityIcon, HomeIcon, PotsIcon, SettingsIcon } from "@/components/ui/TabBarIcons";
 
 function TabLabel({ label, focused }: { label: string; focused: boolean }) {
   return (
@@ -44,33 +45,41 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarStyle: {
-          backgroundColor: tokens.card,
-          borderTopColor: withAlpha(tokens.line, 0.08),
-          borderTopWidth: 1,
-        },
+        tabBarStyle: tabBarStyle(colorScheme),
         tabBarShowLabel: true,
       }}
     >
       <Tabs.Screen
         name="index"
-        options={{ tabBarLabel: ({ focused }) => <TabLabel label="Home" focused={focused} /> }}
+        options={{
+          tabBarLabel: ({ focused }) => <TabLabel label="Home" focused={focused} />,
+          tabBarIcon: ({ focused }) => <HomeIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
+        }}
       />
       <Tabs.Screen
         name="pots"
-        options={{ tabBarLabel: ({ focused }) => <TabLabel label="Pots" focused={focused} /> }}
+        options={{
+          tabBarLabel: ({ focused }) => <TabLabel label="Pots" focused={focused} />,
+          tabBarIcon: ({ focused }) => <PotsIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
+        }}
       />
       <Tabs.Screen
         name="add"
         options={{ tabBarButton: (props) => <QuickAddButton {...props} /> }}
       />
       <Tabs.Screen
-        name="money"
-        options={{ tabBarLabel: ({ focused }) => <TabLabel label="Money" focused={focused} /> }}
+        name="activity"
+        options={{
+          tabBarLabel: ({ focused }) => <TabLabel label="Activity" focused={focused} />,
+          tabBarIcon: ({ focused }) => <ActivityIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
+        }}
       />
       <Tabs.Screen
         name="settings"
-        options={{ tabBarLabel: ({ focused }) => <TabLabel label="Manage" focused={focused} /> }}
+        options={{
+          tabBarLabel: ({ focused }) => <TabLabel label="Settings" focused={focused} />,
+          tabBarIcon: ({ focused }) => <SettingsIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
+        }}
       />
     </Tabs>
   );

@@ -7,6 +7,12 @@
       "runtimeArgs": ["expo", "start", "--web", "--port", "8090"],
       "port": 8090,
       "autoPort": true
+    },
+    {
+      "name": "ledger-dist-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "dist", "-s", "-l", "4173"],
+      "port": 4173
     }
   ]
 }

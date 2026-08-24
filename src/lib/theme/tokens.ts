@@ -54,3 +54,17 @@ export function withAlpha(hex: string, alpha: number): string {
   const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
+
+// The Tabs navigator's tabBarStyle — a react-navigation style prop, not a
+// NativeWind className, so it needs the raw token values. Shared between
+// (tabs)/_layout.tsx (the default) and useHideTabBar (which must restore
+// this exact object on cleanup — restoring `undefined` instead falls back
+// to react-navigation's own unstyled default, not this theme).
+export function tabBarStyle(colorScheme: "light" | "dark" | null | undefined) {
+  const tokens = colorScheme === "dark" ? darkTokens : lightTokens;
+  return {
+    backgroundColor: tokens.card,
+    borderTopColor: withAlpha(tokens.line, 0.08),
+    borderTopWidth: 1,
+  };
+}

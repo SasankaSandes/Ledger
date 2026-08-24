@@ -4,104 +4,96 @@ import { Pressable, Text, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { TodaySummaryCard } from "@/components/home/TodaySummaryCard";
 import { CoachStrip } from "@/components/home/CoachStrip";
-import { SalaryDatePrompt } from "@/components/home/SalaryDatePrompt";
 import { PotCard } from "@/components/home/PotCard";
 import { FixedExpensesSection } from "@/components/home/FixedExpensesSection";
-import { ClosePeriodPanel, type Pool, type SavingsCollectionOption } from "@/components/home/ClosePeriodPanel";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
-import { closeOpenPeriod, ensureOpenPeriodRow, type ForwardLineItem } from "@/lib/period";
+import { ensureOpenPeriod, listMonths } from "@/lib/period";
+import { confirmFixedExpense, unconfirmFixedExpense } from "@/lib/fixedExpenses";
 import {
-  allocatedTotal,
-  cashInHand,
-  committedButUnspent,
-  daysToSalary as computeDaysToSalary,
+  TRANSACTION_COLUMNS,
+  fixedExpenseDefFromRow,
   fmt,
-  monthLabel,
-  periodKey,
-  potRemaining,
+  monthBalance,
+  monthKeyToLabel,
+  potFromRow,
   potSpent,
-  safeToSpendPerDay,
   sumItems,
-  todayKey,
-  uid,
-  type BudgetItem,
-  type LedgerState,
+  transactionFromRow,
+  type FixedExpenseDef,
+  type Period,
+  type Pot,
+  type Transaction,
 } from "@/lib/types";
 
 export default function HomeScreen() {
-  const { householdId, settings } = useHousehold();
-  const [month, setMonth] = useState<string | null>(null);
-  const [state, setState] = useState<LedgerState | null>(null);
-  const [collections, setCollections] = useState<SavingsCollectionOption[]>([]);
-  const [openPot, setOpenPot] = useState<string | null>(null);
-  const [fixedOpen, setFixedOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { householdId } = useHousehold();
+  const [periods, setPeriods] = useState<Period[]>([]);
+  const [viewedIndex, setViewedIndex] = useState(0);
+  const [pots, setPots] = useState<Pot[]>([]);
+  const [fixedExpenses, setFixedExpenses] = useState<FixedExpenseDef[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(true);
   const [coachDismissed, setCoachDismissed] = useState(false);
-  const [saleryPromptDismissed, setSalaryPromptDismissed] = useState(false);
 
-  const loadCollections = useCallback(async (hid: string) => {
+  const viewedPeriod = periods[viewedIndex] ?? null;
+  const isOpen = viewedIndex === 0;
+
+  const loadTransactions = useCallback(async (periodId: string) => {
     const { data } = await supabase
-      .from("savings_collections")
-      .select("id, name")
-      .eq("household_id", hid)
-      .order("created_at", { ascending: true });
-    setCollections((data ?? []).map((c) => ({ id: c.id, name: c.name })));
+      .from("transactions")
+      .select(TRANSACTION_COLUMNS)
+      .eq("period_id", periodId)
+      .order("date", { ascending: false });
+    setTransactions((data ?? []).map(transactionFromRow));
   }, []);
 
-  const loadPeriod = useCallback(async () => {
+  const loadStructure = useCallback(async () => {
     if (!householdId) return;
-    const { month: m, monthly } = await ensureOpenPeriodRow(supabase, householdId, settings);
-    setMonth(m);
-    setState(monthly);
-    await loadCollections(householdId);
-  }, [householdId, settings, loadCollections]);
+    await ensureOpenPeriod(supabase, householdId);
+    const [allPeriods, { data: potData }, { data: fixedData }] = await Promise.all([
+      listMonths(supabase, householdId),
+      supabase
+        .from("pots")
+        .select("id, household_id, name, spend_limit, archived_at")
+        .eq("household_id", householdId)
+        .is("archived_at", null)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("fixed_expenses")
+        .select("id, household_id, category_id, name, amount, active")
+        .eq("household_id", householdId)
+        .eq("active", true)
+        .order("created_at", { ascending: true }),
+    ]);
+    setPeriods(allPeriods);
+    setPots((potData ?? []).map(potFromRow));
+    setFixedExpenses((fixedData ?? []).map(fixedExpenseDefFromRow));
+    setLoading(false);
+  }, [householdId]);
 
   useEffect(() => {
-    loadPeriod();
+    loadStructure();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [householdId]);
 
-  // Money (savings/debts) can write top-ups to this same open period while
-  // Home sits in the background — re-load on every focus so state.topUps
-  // (and everything derived from it) doesn't go stale, which matters most
-  // right before Close Period computes what to carry forward.
+  useEffect(() => {
+    if (viewedPeriod) loadTransactions(viewedPeriod.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewedPeriod?.id]);
+
+  // Quick Add and Settings write to this same household from separate
+  // routes — re-load on every focus so a just-added transaction, pot,
+  // category, or fixed expense shows up the moment the user backs out.
   useFocusEffect(
     useCallback(() => {
-      loadPeriod();
-    }, [loadPeriod])
+      loadStructure();
+      if (viewedPeriod) loadTransactions(viewedPeriod.id);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [viewedPeriod?.id, loadStructure])
   );
 
-  const persist = useCallback(
-    async (next: LedgerState) => {
-      if (!householdId || !month) return;
-      setSaving(true);
-      await supabase
-        .from("budgets")
-        .update({
-          // top_ups deliberately omitted: Home never mutates top-ups itself
-          // (only reads them), and Money's savings/debts actions write to
-          // this same column independently. Including a stale local copy
-          // here would clobber whatever Money most recently wrote — see
-          // SavingsSection/DebtsSection.
-          salary: next.salary,
-          fixed: next.fixed,
-          pots: next.pots,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("household_id", householdId)
-        .eq("month", month);
-      setSaving(false);
-    },
-    [householdId, month]
-  );
-
-  const update = (next: LedgerState) => {
-    setState(next);
-    persist(next);
-  };
-
-  if (!state || !month) {
+  if (loading || !viewedPeriod) {
     return (
       <Screen scroll={false}>
         <View className="flex-1 items-center justify-center">
@@ -111,99 +103,74 @@ export default function HomeScreen() {
     );
   }
 
-  const fixedPaid = state.fixed.filter((f) => f.paid).reduce((s, f) => s + Number(f.amount || 0), 0);
-  const potSpendTotal = state.pots.reduce((s, p) => s + sumItems(p.spendItems), 0);
-  const totalSpent = fixedPaid + potSpendTotal;
-  const topUpsTotal = sumItems(state.topUps);
-  const effectiveSalary = state.salary + topUpsTotal;
-  const moneyLeft = effectiveSalary - totalSpent;
-  const spentPct = effectiveSalary > 0 ? totalSpent / effectiveSalary : 0;
-  const unallocated = effectiveSalary - allocatedTotal(state);
-  const cashHand = cashInHand(state.pots);
+  const cashInTotal = sumItems(transactions.filter((t) => t.type === "in"));
+  const cashOutTotal = sumItems(transactions.filter((t) => t.type === "out"));
+  const balance = monthBalance(viewedPeriod, transactions);
+  const potAllocation = pots.reduce((s, p) => s + p.spendLimit, 0);
+  const fixedExpensesTotal = sumItems(fixedExpenses);
 
-  const days = computeDaysToSalary(settings.salaryDate);
-  const committed = committedButUnspent(state.fixed, state.pots);
-  const spendableLeft = moneyLeft - committed;
-  const perDay = safeToSpendPerDay(moneyLeft, committed, days);
+  const potsOver = pots.filter((p) => p.spendLimit > 0 && potSpent(p.id, transactions) > p.spendLimit);
 
-  const potsOver = state.pots.filter((p) => p.cap > 0 && potSpent(p) > p.cap);
   let coachText = "";
   if (potsOver.length > 0) {
     const op = potsOver[0];
-    coachText = `${op.name} is ${fmt(potSpent(op) - op.cap)} past its cap with ${days} days to payday.`;
-  } else if (unallocated > 0) {
-    coachText = `On track to close with about ${fmt(unallocated)} unallocated.`;
+    coachText = `${op.name} is ${fmt(potSpent(op.id, transactions) - op.spendLimit)} past its limit.`;
   }
   const showCoach = !coachDismissed && !!coachText;
 
-  // Salary is "due" once today's actual period (given salaryDate) has
-  // moved past the one that's still open — i.e. the salary date has
-  // already passed for this period and it hasn't been closed yet.
-  const salaryDue = periodKey(settings.salaryDate) !== month;
-
-  const addSpend = (potId: string, desc: string, amount: number) => {
-    const item: BudgetItem = { id: uid(), desc, amount, date: todayKey() };
-    update({
-      ...state,
-      pots: state.pots.map((p) => (p.id === potId ? { ...p, spendItems: [item, ...p.spendItems] } : p)),
-    });
-  };
-  const removeSpend = (potId: string, itemId: string) => {
-    update({
-      ...state,
-      pots: state.pots.map((p) =>
-        p.id === potId ? { ...p, spendItems: p.spendItems.filter((i) => i.id !== itemId) } : p
-      ),
-    });
-  };
-  const cashOut = (potId: string, amount: number) => {
-    const item: BudgetItem = { id: uid(), desc: "Claimed as cash", amount, date: todayKey() };
-    update({
-      ...state,
-      pots: state.pots.map((p) => (p.id === potId ? { ...p, cashoutItems: [item, ...p.cashoutItems] } : p)),
-    });
-  };
-  const setFixedPaid = (id: string, paid: boolean) => {
-    update({ ...state, fixed: state.fixed.map((f) => (f.id === id ? { ...f, paid } : f)) });
+  const confirmFixed = async (fe: FixedExpenseDef) => {
+    if (!viewedPeriod) return;
+    const txn = await confirmFixedExpense(supabase, viewedPeriod, fe);
+    setTransactions((cur) => [txn, ...cur]);
   };
 
-  const pools: Pool[] = [];
-  if (unallocated > 0) pools.push({ key: "unallocated", label: "Unallocated salary", amount: unallocated });
-  if (cashHand > 0) pools.push({ key: "cashInHand", label: "Cash in hand", amount: cashHand });
-
-  const confirmClose = async (forwardItems: ForwardLineItem[]) => {
-    if (!householdId || !month) return;
-    await closeOpenPeriod(supabase, householdId, settings, { month }, forwardItems);
-    await loadPeriod();
+  const unconfirmFixed = async (fe: FixedExpenseDef) => {
+    if (!viewedPeriod) return;
+    await unconfirmFixedExpense(supabase, viewedPeriod.id, fe.id);
+    setTransactions((cur) => cur.filter((t) => t.fixedExpenseId !== fe.id));
   };
 
   return (
     <Screen>
       <View className="px-4 pb-10 pt-3">
         <View className="flex-row items-baseline justify-between">
-          <View className="flex-row items-baseline gap-2">
-            <Text className="font-display text-[22px] text-gold">Ledger</Text>
-            <Pressable onPress={() => router.push("/history")}>
-              <Text className="font-mono text-[11px] uppercase tracking-wider text-muted">
-                {monthLabel(new Date(`${month}-01T00:00:00`))} ▾
-              </Text>
+          <Text className="font-display text-[22px] text-gold">Ledger</Text>
+          <View className="flex-row items-center gap-3">
+            <Pressable
+              onPress={() => setViewedIndex((i) => Math.min(periods.length - 1, i + 1))}
+              disabled={viewedIndex >= periods.length - 1}
+              hitSlop={8}
+              style={{ opacity: viewedIndex >= periods.length - 1 ? 0.3 : 1 }}
+            >
+              <Text className="text-[13px] text-muted">‹</Text>
+            </Pressable>
+            <Text className="font-mono text-[11px] uppercase tracking-wider text-muted">
+              {monthKeyToLabel(viewedPeriod.monthKey)}
+            </Text>
+            <Pressable
+              onPress={() => setViewedIndex((i) => Math.max(0, i - 1))}
+              disabled={isOpen}
+              hitSlop={8}
+              style={{ opacity: isOpen ? 0.3 : 1 }}
+            >
+              <Text className="text-[13px] text-muted">›</Text>
             </Pressable>
           </View>
-          <Text className="font-mono text-[10.5px] text-muted2">{saving ? "saving…" : "saved"}</Text>
         </View>
-
-        {salaryDue && !saleryPromptDismissed && (
-          <SalaryDatePrompt onClose={() => setSalaryPromptDismissed(true)} />
-        )}
+        <View className="mt-1 flex-row items-center justify-end gap-3">
+          {!isOpen && <Text className="text-[10.5px] text-muted2">Viewing a past month — read only</Text>}
+          <Pressable onPress={() => router.push("/activity")} hitSlop={6}>
+            <Text className="text-[10.5px] text-muted2 underline">Activity ›</Text>
+          </Pressable>
+        </View>
 
         <View className="mt-3">
           <TodaySummaryCard
-            safePerDay={perDay}
-            spendableTotal={spendableLeft}
-            daysToSalary={days}
-            spentPct={spentPct}
-            totalSpent={totalSpent}
-            moneyLeft={moneyLeft}
+            balance={balance}
+            cashIn={cashInTotal}
+            cashOut={cashOutTotal}
+            potAllocation={potAllocation}
+            fixedExpensesTotal={fixedExpensesTotal}
           />
         </View>
 
@@ -211,54 +178,31 @@ export default function HomeScreen() {
 
         <View className="mb-2.5 mt-5 flex-row items-center justify-between">
           <Text className="text-[11px] font-body-semibold uppercase tracking-wider text-muted">Pots</Text>
-          <Text className="font-mono text-[11px] text-muted2">
-            {potsOver.length > 0 ? `${potsOver.length} over cap` : "all on pace"}
-          </Text>
+          {potsOver.length > 0 && (
+            <Text className="font-mono text-[11px] text-muted2">{potsOver.length} over limit</Text>
+          )}
         </View>
         <View className="gap-2">
-          {state.pots.map((pot) => (
+          {pots.map((pot) => (
             <PotCard
               key={pot.id}
               pot={pot}
-              expanded={openPot === pot.id}
-              onToggle={() => setOpenPot((cur) => (cur === pot.id ? null : pot.id))}
-              onAddSpend={(desc, amount) => addSpend(pot.id, desc, amount)}
-              onRemoveSpend={(itemId) => removeSpend(pot.id, itemId)}
-              onCashOut={(amount) => cashOut(pot.id, amount)}
+              transactions={transactions.filter((t) => t.potId === pot.id)}
+              onPress={() => router.push(`/activity?pot=${pot.id}`)}
             />
           ))}
-          {state.pots.length === 0 && (
-            <Text className="text-[12.5px] text-muted2">No pots yet — add one from Manage.</Text>
+          {pots.length === 0 && (
+            <Text className="text-[12.5px] text-muted2">No pots yet — add one from Settings.</Text>
           )}
         </View>
 
-        <Pressable onPress={() => setFixedOpen((v) => !v)} className="mt-5 flex-row items-center justify-between">
-          <Text className="text-[11px] font-body-semibold uppercase tracking-wider text-muted">
-            Fixed expenses
-          </Text>
-          <Text className="font-mono text-[11px] text-muted2">{fixedOpen ? "hide" : "show"}</Text>
-        </Pressable>
-        {fixedOpen && <FixedExpensesSection fixed={state.fixed} onTogglePaid={setFixedPaid} />}
-
-        <View
-          className={`mt-5 flex-row items-center justify-between rounded-xl border px-3.5 py-3.5 ${
-            unallocated < 0 ? "border-negative/30 bg-negative/10" : "border-line/10 bg-card"
-          }`}
-        >
-          <Text className="text-[12.5px] text-text2">{unallocated < 0 ? "Over-allocated" : "Unallocated"}</Text>
-          <Text className={`font-mono text-[15px] font-body-semibold ${unallocated < 0 ? "text-negative" : "text-gold"}`}>
-            {fmt(unallocated)}
-          </Text>
-        </View>
-
-        {householdId && (
-          <ClosePeriodPanel
-            pools={pools}
-            savingsCollections={collections}
-            householdId={householdId}
-            onConfirm={confirmClose}
-          />
-        )}
+        <FixedExpensesSection
+          fixedExpenses={fixedExpenses}
+          transactionsThisPeriod={transactions}
+          onConfirm={confirmFixed}
+          onUnconfirm={unconfirmFixed}
+          readOnly={!isOpen}
+        />
       </View>
     </Screen>
   );

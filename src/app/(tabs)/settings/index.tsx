@@ -1,188 +1,137 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { router } from "expo-router";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
-import { AmountInput } from "@/components/ui/AmountInput";
-import { AllocationSummary } from "@/components/manage/AllocationSummary";
-import { AnnualAllowanceEditor } from "@/components/manage/AnnualAllowanceEditor";
-import { FixedExpenseEditor } from "@/components/manage/FixedExpenseEditor";
-import { PotEditor } from "@/components/manage/PotEditor";
+import { StartNewMonthPanel } from "@/components/home/StartNewMonthPanel";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { useTheme } from "@/lib/theme/ThemeProvider";
 import { supabase } from "@/lib/supabase/client";
+import { confirmAction } from "@/lib/confirm";
+import { ensureOpenPeriod, startNewMonth } from "@/lib/period";
 import {
-  householdSettingsToRow,
-  monthlyStructureFromRow,
-  reconcilePeriodFromSettings,
-  type HouseholdSettings,
+  TRANSACTION_COLUMNS,
+  monthBalance,
+  transactionFromRow,
+  type Period,
+  type Transaction,
 } from "@/lib/types";
 import type { ThemePreference } from "@/lib/theme/tokens";
 
-const DEBOUNCE_MS = 500;
 const THEME_OPTIONS: { key: ThemePreference; label: string }[] = [
   { key: "system", label: "System" },
   { key: "light", label: "Light" },
   { key: "dark", label: "Dark" },
 ];
 
-export default function ManageScreen() {
-  const { householdId, settings: initialSettings, refresh } = useHousehold();
+const NAV_ROWS: { label: string; subtitle: string; route: string }[] = [
+  { label: "Categories", subtitle: "Cash In / Cash Out tags", route: "/settings/categories" },
+  { label: "Pots", subtitle: "Budgets with spend limits", route: "/settings/pots-editor" },
+  { label: "Fixed expenses", subtitle: "Recurring monthly costs", route: "/settings/fixed-expenses" },
+  { label: "Household", subtitle: "Just you", route: "/settings/household" },
+];
+
+export default function SettingsScreen() {
+  const { householdId } = useHousehold();
   const { preference, setPreference } = useTheme();
-  const [settings, setSettings] = useState<HouseholdSettings>(initialSettings);
-  const [saving, setSaving] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { signOut } = useAuth();
+  const [period, setPeriod] = useState<Period | null>(null);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Seed once household settings arrive from HouseholdProvider (it loads
-  // asynchronously after auth resolves).
+  const load = useCallback(async () => {
+    if (!householdId) return;
+    setLoading(true);
+    const openPeriod = await ensureOpenPeriod(supabase, householdId);
+    const { data } = await supabase
+      .from("transactions")
+      .select(TRANSACTION_COLUMNS)
+      .eq("period_id", openPeriod.id);
+    setPeriod(openPeriod);
+    setTransactions((data ?? []).map(transactionFromRow));
+    setLoading(false);
+  }, [householdId]);
+
   useEffect(() => {
-    setSettings(initialSettings);
-  }, [initialSettings]);
+    load();
+  }, [load]);
 
-  const persist = useCallback(
-    async (next: HouseholdSettings) => {
-      if (!householdId) return;
-      setSaving(true);
-      await supabase
-        .from("household_settings")
-        .update({ ...householdSettingsToRow(next), updated_at: new Date().toISOString() })
-        .eq("household_id", householdId);
-
-      // Cascade the structural change into the open period right away —
-      // names/caps come from settings, already-logged items are preserved
-      // by id (reconcilePeriodFromSettings).
-      const { data: current } = await supabase
-        .from("budgets")
-        .select("month, salary, fixed, pots, top_ups")
-        .eq("household_id", householdId)
-        .is("closed_at", null)
-        .maybeSingle();
-      if (current) {
-        const reconciled = reconcilePeriodFromSettings(next, monthlyStructureFromRow(current));
-        await supabase
-          .from("budgets")
-          .update({ fixed: reconciled.fixed, pots: reconciled.pots, updated_at: new Date().toISOString() })
-          .eq("household_id", householdId)
-          .eq("month", current.month);
-      }
-      // Keeps HouseholdProvider's cached settings current — without this,
-      // a freshly-added annual allowance (or pot/fixed item) wouldn't show
-      // up on Money/Home until a full app reload.
-      await refresh();
-      setSaving(false);
-    },
-    [householdId, refresh]
-  );
-
-  const update = (next: HouseholdSettings) => {
-    setSettings(next);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => persist(next), DEBOUNCE_MS);
+  const confirmStartNewMonth = async () => {
+    if (!householdId || !period) return;
+    await startNewMonth(supabase, householdId, period, transactions);
+    await load();
   };
 
-  useEffect(() => {
-    const timer = debounceRef.current;
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
+  const handleLogOut = () => {
+    confirmAction("Log out?", "You'll need to sign back in to continue.", "Log out", () => signOut());
+  };
+
+  if (loading || !householdId || !period) {
+    return (
+      <Screen scroll={false}>
+        <View className="flex-1 items-center justify-center">
+          <Text className="text-[13px] text-muted">Loading…</Text>
+        </View>
+      </Screen>
+    );
+  }
+
+  const balance = monthBalance(period, transactions);
 
   return (
     <Screen>
       <View className="px-[18px] pb-[60px] pt-7">
-        <View className="mb-0.5 flex-row items-baseline justify-between">
-          <Text className="font-display text-[22px] text-text">Manage</Text>
-          <Text className="text-[11px]" style={{ color: saving ? "#D9A441" : "#5A5F6D" }}>
-            {saving ? "saving…" : "saved"}
+        <Text className="mb-5 font-display text-[22px] text-text">Settings</Text>
+
+        <View className="gap-2">
+          {NAV_ROWS.map((row) => (
+            <Pressable
+              key={row.route}
+              onPress={() => router.push(row.route as never)}
+              className="flex-row items-center gap-2.5 rounded-2xl border border-line/10 bg-card px-3.5 py-3.5"
+            >
+              <View className="flex-1">
+                <Text className="text-[13px] text-text2">{row.label}</Text>
+                <Text className="mt-0.5 text-[11px] text-muted2">{row.subtitle}</Text>
+              </View>
+              <Text className="text-[13px] text-muted">›</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <View className="mt-6 rounded-2xl border border-line/10 bg-card px-5 py-[22px]">
+          <Text className="mb-2 text-[11px] font-body-semibold uppercase tracking-wider text-muted">
+            Preferences
           </Text>
+          <View className="flex-row items-center justify-between gap-2.5">
+            <View className="flex-1 pr-2">
+              <Text className="text-[13px] text-text2">Theme</Text>
+              <Text className="mt-0.5 text-[11px] text-muted2">Yours only — other members keep theirs</Text>
+            </View>
+            <View className="flex-shrink-0 flex-row gap-1 rounded-[9px] bg-input p-1">
+              {THEME_OPTIONS.map((opt) => (
+                <Pressable
+                  key={opt.key}
+                  onPress={() => setPreference(opt.key)}
+                  className={`rounded-md px-2.5 py-1.5 ${preference === opt.key ? "bg-fill" : ""}`}
+                >
+                  <Text className={`text-[11.5px] ${preference === opt.key ? "text-text" : "text-muted"}`}>
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
         </View>
 
-        <View className="mt-5 gap-6 rounded-2xl border border-line/10 bg-card px-5 py-[22px]">
-          <View>
-            <Text className="mb-2 text-[11px] font-body-semibold uppercase tracking-wider text-muted">
-              The plan
-            </Text>
-            <View className="flex-row items-center gap-2.5">
-              <Text className="flex-1 text-[13px] text-text2">Salary</Text>
-              <AmountInput
-                value={settings.salary}
-                onChange={(n) => update({ ...settings, salary: n ?? 0 })}
-                className="w-[120px] rounded-lg border border-line/10 bg-input px-2.5 py-2 text-right font-mono text-[13px] text-text"
-              />
-            </View>
-            <View className="mt-2 flex-row items-center gap-2.5">
-              <Text className="flex-1 text-[13px] text-text2">Paid on day</Text>
-              <TextInput
-                value={String(settings.salaryDate)}
-                onChangeText={(t) => {
-                  const n = Math.min(31, Math.max(1, Number(t.replace(/[^0-9]/g, "")) || 1));
-                  update({ ...settings, salaryDate: n });
-                }}
-                inputMode="numeric"
-                className="w-16 rounded-lg border border-line/10 bg-input px-2.5 py-2 text-right font-mono text-[13px] text-text"
-              />
-            </View>
-          </View>
+        <StartNewMonthPanel balance={balance} onConfirm={confirmStartNewMonth} />
 
-          <View>
-            <Text className="mb-2 text-[11px] font-body-semibold uppercase tracking-wider text-muted">Pots</Text>
-            <PotEditor items={settings.pots} onChange={(pots) => update({ ...settings, pots })} />
-          </View>
-
-          <View>
-            <Text className="mb-2 text-[11px] font-body-semibold uppercase tracking-wider text-muted">
-              Fixed expenses
-            </Text>
-            <FixedExpenseEditor items={settings.fixed} onChange={(fixed) => update({ ...settings, fixed })} />
-          </View>
-
-          <View>
-            <Text className="mb-2 text-[11px] font-body-semibold uppercase tracking-wider text-muted">
-              Annual allowances
-            </Text>
-            <AnnualAllowanceEditor
-              items={settings.annualAllowances}
-              onChange={(annualAllowances) => update({ ...settings, annualAllowances })}
-            />
-          </View>
-
-          <View>
-            <Text className="mb-2 text-[11px] font-body-semibold uppercase tracking-wider text-muted">
-              Preferences
-            </Text>
-            <View className="flex-row items-center justify-between gap-2.5">
-              <View>
-                <Text className="text-[13px] text-text2">Theme</Text>
-                <Text className="mt-0.5 text-[11px] text-muted2">Yours only — other members keep theirs</Text>
-              </View>
-              <View className="flex-row gap-1 rounded-[9px] bg-input p-1">
-                {THEME_OPTIONS.map((opt) => (
-                  <Pressable
-                    key={opt.key}
-                    onPress={() => setPreference(opt.key)}
-                    className={`rounded-md px-2.5 py-1.5 ${preference === opt.key ? "bg-fill" : ""}`}
-                  >
-                    <Text className={`text-[11.5px] ${preference === opt.key ? "text-text" : "text-muted"}`}>
-                      {opt.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          </View>
-
-          <Pressable
-            onPress={() => router.push("/settings/household")}
-            className="flex-row items-center gap-2.5 rounded-2xl border border-line/10 bg-card px-3.5 py-3.5"
-          >
-            <View className="flex-1">
-              <Text className="text-[13px] text-text2">Household</Text>
-              <Text className="mt-0.5 text-[11px] text-muted2">Just you</Text>
-            </View>
-            <Text className="text-[13px] text-muted">›</Text>
-          </Pressable>
-
-          <AllocationSummary settings={settings} />
-        </View>
+        <Pressable
+          onPress={handleLogOut}
+          className="mt-6 items-center rounded-2xl border border-negative/25 bg-card px-3.5 py-3.5"
+        >
+          <Text className="text-[13px] font-body-medium text-negative">Log out</Text>
+        </Pressable>
       </View>
     </Screen>
   );

@@ -1,6 +1,7 @@
 import "@/global.css";
 import { useCallback } from "react";
 import { Stack } from "expo-router";
+import Head from "expo-router/head";
 import * as SplashScreen from "expo-splash-screen";
 import { View } from "react-native";
 import { useAppFonts } from "@/lib/fonts";
@@ -17,16 +18,26 @@ export default function RootLayout() {
     if (fontsLoaded || fontError) await SplashScreen.hideAsync();
   }, [fontsLoaded, fontError]);
 
-  if (!fontsLoaded && !fontError) return null;
-
   return (
-    <View style={{ flex: 1 }} onLayout={onLayout}>
-      <AuthProvider>
-        <HouseholdProvider>
-          <ThemedRoot />
-        </HouseholdProvider>
-      </AuthProvider>
-    </View>
+    <>
+      <Head>
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="apple-touch-icon" href="/logo192.png" />
+        <meta name="theme-color" content="#101218" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="Ledger" />
+      </Head>
+      {(fontsLoaded || fontError) && (
+        <View style={{ flex: 1 }} onLayout={onLayout}>
+          <AuthProvider>
+            <HouseholdProvider>
+              <ThemedRoot />
+            </HouseholdProvider>
+          </AuthProvider>
+        </View>
+      )}
+    </>
   );
 }
 
@@ -53,7 +64,6 @@ function ThemedRoot() {
 
         <Stack.Protected guard={signedIn && onboarded}>
           <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="history" />
           <Stack.Screen name="quick-add" options={{ presentation: "modal" }} />
         </Stack.Protected>
 
