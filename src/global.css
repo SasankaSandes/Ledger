@@ -32,6 +32,21 @@
   --color-info: 43 127 176; /* #2B7FB0 */
 }
 
+/*
+ * Web only. iOS Safari zooms toward any focused field whose font-size is < 16px
+ * and (without maximum-scale=1 — see public/index.html) never zooms back out.
+ * This app's inputs are 11–13px by design, so pin the *rendered* size to 16px
+ * on web. `!important` is needed to beat NativeWind's atomic `.text-[13px]`
+ * classes. Native has no <input>/<textarea>/<select> elements and NativeWind's
+ * native compiler ignores bare-element rules, so this is inert off the web.
+ * Accepted trade-off: web form fields render larger than the native design.
+ */
+input,
+textarea,
+select {
+  font-size: 16px !important;
+}
+
 .dark:root {
   --color-bg: 16 18 24; /* #101218 */
   --color-card: 23 26 33; /* #171A21 */

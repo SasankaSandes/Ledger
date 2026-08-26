@@ -80,6 +80,7 @@ function ThemedRoot() {
         <Stack.Protected guard={signedIn && hasHousehold && onboarded}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="quick-add" options={{ presentation: "modal" }} />
+          <Stack.Screen name="edit-transaction" options={{ presentation: "modal" }} />
         </Stack.Protected>
 
         <Stack.Screen name="auth/callback" />

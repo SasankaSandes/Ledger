@@ -97,8 +97,25 @@ export function shortDate(dateStr: string) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+// Local-calendar "YYYY-MM-DD" for an arbitrary Date. Never goes through
+// toISOString() — that's UTC and shifts the day for anyone west of GMT near
+// midnight, which would silently mis-date transactions.
+export function dateToKey(d: Date): string {
+  return (
+    `${d.getFullYear()}-` +
+    `${String(d.getMonth() + 1).padStart(2, "0")}-` +
+    `${String(d.getDate()).padStart(2, "0")}`
+  );
+}
+
+// Parse a "YYYY-MM-DD" key back to a Date at local midnight — same idiom
+// shortDate() uses above.
+export function keyToDate(key: string): Date {
+  return new Date(key + "T00:00:00");
+}
+
 export function todayKey() {
-  return monthKey() + "-" + String(new Date().getDate()).padStart(2, "0");
+  return dateToKey(new Date());
 }
 
 export function fmt(n: number | undefined) {

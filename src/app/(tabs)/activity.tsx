@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
@@ -206,19 +206,24 @@ export default function ActivityScreen() {
                 key={t.id}
                 className="flex-row items-center gap-2.5 rounded-xl border border-line/10 bg-card px-3.5 py-3"
               >
-                <View className="flex-1">
-                  <Text className="text-[12.5px] text-text2" numberOfLines={1}>
-                    {t.desc}
+                <Pressable
+                  onPress={() => router.push(`/edit-transaction?id=${t.id}`)}
+                  className="flex-1 flex-row items-center gap-2.5"
+                >
+                  <View className="flex-1">
+                    <Text className="text-[12.5px] text-text2" numberOfLines={1}>
+                      {t.desc}
+                    </Text>
+                    <Text className="mt-0.5 text-[10.5px] text-muted2">
+                      {cat?.name ?? "—"}
+                      {pot ? ` · ${pot.name}` : ""} · {shortDate(t.date)}
+                    </Text>
+                  </View>
+                  <Text className={`font-mono text-[13px] ${t.type === "in" ? "text-positive" : "text-text"}`}>
+                    {t.type === "in" ? "+" : "−"}
+                    {t.amount.toLocaleString()}
                   </Text>
-                  <Text className="mt-0.5 text-[10.5px] text-muted2">
-                    {cat?.name ?? "—"}
-                    {pot ? ` · ${pot.name}` : ""} · {shortDate(t.date)}
-                  </Text>
-                </View>
-                <Text className={`font-mono text-[13px] ${t.type === "in" ? "text-positive" : "text-text"}`}>
-                  {t.type === "in" ? "+" : "−"}
-                  {t.amount.toLocaleString()}
-                </Text>
+                </Pressable>
                 <Pressable onPress={() => confirmRemove(t)} hitSlop={8}>
                   <Text className="px-0.5 text-[14px] text-faint">×</Text>
                 </Pressable>

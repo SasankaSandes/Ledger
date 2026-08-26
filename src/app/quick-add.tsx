@@ -5,6 +5,7 @@ import { Screen } from "@/components/ui/Screen";
 import { Keypad } from "@/components/quickadd/Keypad";
 import { CategoryChipRow } from "@/components/quickadd/CategoryChipRow";
 import { PotChipRow } from "@/components/quickadd/PotChipRow";
+import { DateField } from "@/components/ui/DateField";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
 import { ensureOpenPeriod } from "@/lib/period";
@@ -38,6 +39,7 @@ export default function QuickAddScreen() {
   const [mode, setMode] = useState<Mode>("out");
   const [digits, setDigits] = useState("");
   const [desc, setDesc] = useState("");
+  const [date, setDate] = useState(todayKey());
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [categoryManuallySet, setCategoryManuallySet] = useState(false);
   const [selectedPotId, setSelectedPotId] = useState<string | null>(null);
@@ -129,6 +131,7 @@ export default function QuickAddScreen() {
   const resetForm = () => {
     setDigits("");
     setDesc("");
+    setDate(todayKey());
     setSelectedCategoryId(null);
     setCategoryManuallySet(false);
     setSelectedPotId(null);
@@ -150,7 +153,7 @@ export default function QuickAddScreen() {
         type: mode,
         amount,
         description: desc.trim() || selectedCategory.name,
-        date: todayKey(),
+        date,
       });
       if (insertError) throw insertError;
       setJustAdded(`Added to ${selectedCategory.name}`);
@@ -215,6 +218,10 @@ export default function QuickAddScreen() {
           placeholderTextColor="#5C6070"
           className="mt-3 rounded-lg border border-line/10 bg-input px-3 py-2.5 text-[13px] text-text"
         />
+
+        <View className="mt-3">
+          <DateField value={date} onChange={setDate} maximumDate={new Date()} />
+        </View>
 
         <View className="mt-3.5">
           <CategoryChipRow
