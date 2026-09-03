@@ -28,7 +28,7 @@ type TypeFilter = "all" | "in" | "out";
 // to give. Category and Pot chips elsewhere in the app can deep link here
 // pre-filtered via ?category=<id> / ?pot=<id>.
 export default function ActivityScreen() {
-  const { householdId, nicknames } = useHousehold();
+  const { householdId, nicknames, memberCount } = useHousehold();
   const { session } = useAuth();
   const myId = session?.user.id;
   const params = useLocalSearchParams<{ category?: string; pot?: string }>();
@@ -106,9 +106,10 @@ export default function ActivityScreen() {
   const cashIn = sumItems(filtered.filter((t) => t.type === "in"));
   const cashOut = sumItems(filtered.filter((t) => t.type === "out"));
 
-  // Only label rows once the feed actually holds someone else's transaction —
-  // in a solo household "by me" on every row is just noise.
-  const showAuthors = transactions.some((t) => t.createdBy && t.createdBy !== myId);
+  // Show the "by <who>" tag whenever the household has more than one person.
+  // Rows added before attribution existed have a null createdBy and stay
+  // unlabelled.
+  const showAuthors = memberCount > 1;
   const authorSuffix = (t: Transaction): string => {
     if (!showAuthors || !t.createdBy) return "";
     if (t.createdBy === myId) return " · by me";

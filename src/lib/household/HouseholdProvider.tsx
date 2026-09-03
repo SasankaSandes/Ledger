@@ -1,7 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { supabase } from "@/lib/supabase/client";
-import { getMyMembership, getOnboarded, setMyNicknames, setMyThemePreference } from "@/lib/supabase/queries";
+import {
+  getHouseholdMemberCount,
+  getMyMembership,
+  getOnboarded,
+  setMyNicknames,
+  setMyThemePreference,
+} from "@/lib/supabase/queries";
 import type { ThemePreference } from "@/lib/theme/tokens";
 
 type HouseholdContextValue = {
@@ -10,6 +16,9 @@ type HouseholdContextValue = {
   role: "owner" | "member" | null;
   themePreference: ThemePreference;
   onboarded: boolean;
+  // How many people are in this household (drives whether Activity shows the
+  // "by <who>" tag at all — pointless when it's just you).
+  memberCount: number;
   // This viewer's private nicknames for other members: { memberUserId: nickname }.
   nicknames: Record<string, string>;
   refresh: () => Promise<void>;
@@ -31,6 +40,7 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<"owner" | "member" | null>(null);
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>("dark");
   const [onboarded, setOnboarded] = useState(false);
+  const [memberCount, setMemberCount] = useState(0);
   const [nicknames, setNicknamesState] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
@@ -39,6 +49,7 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
       setRole(null);
       setThemePreferenceState("dark");
       setOnboarded(false);
+      setMemberCount(0);
       setNicknamesState({});
       setLoading(false);
       return;
@@ -52,6 +63,7 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
       setRole(null);
       setThemePreferenceState("dark");
       setOnboarded(false);
+      setMemberCount(0);
       setNicknamesState({});
       setLoading(false);
       return;
@@ -60,7 +72,12 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
     setRole(membership.role);
     setThemePreferenceState(membership.themePreference);
     setNicknamesState(membership.nicknames);
-    setOnboarded(await getOnboarded(supabase, membership.householdId));
+    const [onboardedFlag, count] = await Promise.all([
+      getOnboarded(supabase, membership.householdId),
+      getHouseholdMemberCount(supabase, membership.householdId),
+    ]);
+    setOnboarded(onboardedFlag);
+    setMemberCount(count);
     setLoading(false);
   }, [session]);
 
@@ -102,6 +119,7 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
         role,
         themePreference,
         onboarded,
+        memberCount,
         nicknames,
         refresh: load,
         setThemePreference,
