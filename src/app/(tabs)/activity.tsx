@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { ActionSheet } from "@/components/ui/ActionSheet";
 import { Screen } from "@/components/ui/Screen";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
@@ -38,6 +39,7 @@ export default function ActivityScreen() {
   const [potFilter, setPotFilter] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [loading, setLoading] = useState(true);
+  const [menuFor, setMenuFor] = useState<Transaction | null>(null);
 
   useEffect(() => {
     if (typeof params.category === "string") setCategoryFilter(params.category);
@@ -215,37 +217,45 @@ export default function ActivityScreen() {
             const cat = categoryById.get(t.categoryId);
             const pot = t.potId ? potById.get(t.potId) : null;
             return (
-              <View
+              <Pressable
                 key={t.id}
+                onPress={() => setMenuFor(t)}
                 className="flex-row items-center gap-2.5 rounded-xl border border-line/10 bg-card px-3.5 py-3"
               >
-                <Pressable
-                  onPress={() => router.push(`/edit-transaction?id=${t.id}`)}
-                  className="flex-1 flex-row items-center gap-2.5"
-                >
-                  <View className="flex-1">
-                    <Text className="text-[12.5px] text-text2" numberOfLines={1}>
-                      {t.desc}
-                    </Text>
-                    <Text className="mt-0.5 text-[10.5px] text-muted2">
-                      {cat?.name ?? "—"}
-                      {pot ? ` · ${pot.name}` : ""} · {shortDate(t.date)}
-                      {authorSuffix(t)}
-                    </Text>
-                  </View>
-                  <Text className={`font-mono text-[13px] ${t.type === "in" ? "text-positive" : "text-text"}`}>
-                    {t.type === "in" ? "+" : "−"}
-                    {t.amount.toLocaleString()}
+                <View className="flex-1">
+                  <Text className="text-[12.5px] text-text2" numberOfLines={1}>
+                    {t.desc}
                   </Text>
-                </Pressable>
-                <Pressable onPress={() => confirmRemove(t)} hitSlop={8}>
-                  <Text className="px-0.5 text-[14px] text-faint">×</Text>
-                </Pressable>
-              </View>
+                  <Text className="mt-0.5 text-[10.5px] text-muted2">
+                    {cat?.name ?? "—"}
+                    {pot ? ` · ${pot.name}` : ""} · {shortDate(t.date)}
+                    {authorSuffix(t)}
+                  </Text>
+                </View>
+                <Text className={`font-mono text-[13px] ${t.type === "in" ? "text-positive" : "text-text"}`}>
+                  {t.type === "in" ? "+" : "−"}
+                  {t.amount.toLocaleString()}
+                </Text>
+                <Text className="px-0.5 text-[15px] leading-none text-faint">⋮</Text>
+              </Pressable>
             );
           })}
         </View>
       </View>
+
+      <ActionSheet
+        visible={menuFor !== null}
+        onClose={() => setMenuFor(null)}
+        title={menuFor?.desc}
+        actions={
+          menuFor
+            ? [
+                { label: "Edit", onPress: () => router.push(`/edit-transaction?id=${menuFor.id}`) },
+                { label: "Remove", destructive: true, onPress: () => confirmRemove(menuFor) },
+              ]
+            : []
+        }
+      />
     </Screen>
   );
 }
