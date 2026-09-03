@@ -8,6 +8,7 @@ export default function SettingsLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="household" />
+      <Stack.Screen name="member-names" />
       <Stack.Screen name="categories" />
       <Stack.Screen name="pots-editor" />
       <Stack.Screen name="fixed-expenses" />

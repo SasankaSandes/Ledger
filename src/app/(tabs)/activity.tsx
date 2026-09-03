@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
 import { confirmAction } from "@/lib/confirm";
@@ -26,7 +27,9 @@ type TypeFilter = "all" | "in" | "out";
 // to give. Category and Pot chips elsewhere in the app can deep link here
 // pre-filtered via ?category=<id> / ?pot=<id>.
 export default function ActivityScreen() {
-  const { householdId } = useHousehold();
+  const { householdId, nicknames } = useHousehold();
+  const { session } = useAuth();
+  const myId = session?.user.id;
   const params = useLocalSearchParams<{ category?: string; pot?: string }>();
   const [categories, setCategories] = useState<Category[]>([]);
   const [pots, setPots] = useState<Pot[]>([]);
@@ -100,6 +103,16 @@ export default function ActivityScreen() {
   });
   const cashIn = sumItems(filtered.filter((t) => t.type === "in"));
   const cashOut = sumItems(filtered.filter((t) => t.type === "out"));
+
+  // Only label rows once the feed actually holds someone else's transaction —
+  // in a solo household "by me" on every row is just noise.
+  const showAuthors = transactions.some((t) => t.createdBy && t.createdBy !== myId);
+  const authorSuffix = (t: Transaction): string => {
+    if (!showAuthors || !t.createdBy) return "";
+    if (t.createdBy === myId) return " · by me";
+    const nick = nicknames[t.createdBy];
+    return nick ? ` · by ${nick}` : " · by a member";
+  };
 
   const remove = async (id: string) => {
     await supabase.from("transactions").delete().eq("id", id);
@@ -217,6 +230,7 @@ export default function ActivityScreen() {
                     <Text className="mt-0.5 text-[10.5px] text-muted2">
                       {cat?.name ?? "—"}
                       {pot ? ` · ${pot.name}` : ""} · {shortDate(t.date)}
+                      {authorSuffix(t)}
                     </Text>
                   </View>
                   <Text className={`font-mono text-[13px] ${t.type === "in" ? "text-positive" : "text-text"}`}>

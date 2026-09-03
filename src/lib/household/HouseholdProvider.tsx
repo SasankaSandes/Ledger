@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { supabase } from "@/lib/supabase/client";
-import { getMyMembership, getOnboarded, setMyThemePreference } from "@/lib/supabase/queries";
+import { getMyMembership, getOnboarded, setMyNicknames, setMyThemePreference } from "@/lib/supabase/queries";
 import type { ThemePreference } from "@/lib/theme/tokens";
 
 type HouseholdContextValue = {
@@ -10,8 +10,11 @@ type HouseholdContextValue = {
   role: "owner" | "member" | null;
   themePreference: ThemePreference;
   onboarded: boolean;
+  // This viewer's private nicknames for other members: { memberUserId: nickname }.
+  nicknames: Record<string, string>;
   refresh: () => Promise<void>;
   setThemePreference: (pref: ThemePreference) => void;
+  setNicknames: (next: Record<string, string>) => void;
 };
 
 const HouseholdContext = createContext<HouseholdContextValue | null>(null);
@@ -28,6 +31,7 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<"owner" | "member" | null>(null);
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>("dark");
   const [onboarded, setOnboarded] = useState(false);
+  const [nicknames, setNicknamesState] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     if (!session) {
@@ -35,6 +39,7 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
       setRole(null);
       setThemePreferenceState("dark");
       setOnboarded(false);
+      setNicknamesState({});
       setLoading(false);
       return;
     }
@@ -42,17 +47,19 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
     if (!membership) {
       // Reachable mid-session now (leave/removal), not just at sign-out —
       // reset every field, not just householdId, so a stale role/theme/
-      // onboarded from the old household can't leak into the next one.
+      // onboarded/nicknames from the old household can't leak into the next one.
       setHouseholdId(null);
       setRole(null);
       setThemePreferenceState("dark");
       setOnboarded(false);
+      setNicknamesState({});
       setLoading(false);
       return;
     }
     setHouseholdId(membership.householdId);
     setRole(membership.role);
     setThemePreferenceState(membership.themePreference);
+    setNicknamesState(membership.nicknames);
     setOnboarded(await getOnboarded(supabase, membership.householdId));
     setLoading(false);
   }, [session]);
@@ -75,9 +82,31 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
     [session, householdId]
   );
 
+  const setNicknames = useCallback(
+    (next: Record<string, string>) => {
+      setNicknamesState(next);
+      if (session && householdId) {
+        setMyNicknames(supabase, householdId, session.user.id, next).catch((err) =>
+          console.error("failed to persist nicknames", err)
+        );
+      }
+    },
+    [session, householdId]
+  );
+
   return (
     <HouseholdContext.Provider
-      value={{ loading, householdId, role, themePreference, onboarded, refresh: load, setThemePreference }}
+      value={{
+        loading,
+        householdId,
+        role,
+        themePreference,
+        onboarded,
+        nicknames,
+        refresh: load,
+        setThemePreference,
+        setNicknames,
+      }}
     >
       {children}
     </HouseholdContext.Provider>

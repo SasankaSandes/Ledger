@@ -52,6 +52,7 @@ export type Transaction = {
   amount: number;
   desc: string;
   date: string; // ISO YYYY-MM-DD, defaults to today at add time
+  createdBy: string | null; // auth user id of whoever added it; null for rows predating attribution
 };
 
 // The container for one user-declared month. Exactly one period per
@@ -73,7 +74,7 @@ export type Period = {
 // Shared column list for every `.from("transactions").select(...)` call —
 // one place to update if the shape changes, instead of six.
 export const TRANSACTION_COLUMNS =
-  "id, household_id, period_id, category_id, pot_id, fixed_expense_id, type, amount, description, date";
+  "id, household_id, period_id, category_id, pot_id, fixed_expense_id, type, amount, description, date, created_by";
 
 export function monthKey(d: Date = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -226,6 +227,7 @@ export function transactionFromRow(row: {
   amount: number;
   description: string; // DB column is "description" — "desc" is a reserved SQL keyword
   date: string;
+  created_by: string | null;
 }): Transaction {
   return {
     id: row.id,
@@ -238,6 +240,7 @@ export function transactionFromRow(row: {
     amount: row.amount,
     desc: row.description,
     date: row.date,
+    createdBy: row.created_by,
   };
 }
 

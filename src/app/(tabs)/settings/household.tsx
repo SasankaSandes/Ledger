@@ -195,6 +195,15 @@ export default function HouseholdScreen() {
               )}
             </View>
           ))}
+          {members.length > 1 && (
+            <Pressable
+              onPress={() => router.push("/settings/member-names")}
+              className="mt-1 flex-row items-center justify-between border-t border-line/10 pt-2.5"
+            >
+              <Text className="text-[12.5px] text-info">Set member names</Text>
+              <Text className="text-[13px] text-muted2">›</Text>
+            </Pressable>
+          )}
         </View>
 
         {isOwner && (

@@ -8,6 +8,8 @@ export type Membership = {
   householdId: string;
   role: "owner" | "member";
   themePreference: ThemePreference;
+  // This viewer's private nicknames for other members: { memberUserId: nickname }.
+  nicknames: Record<string, string>;
 };
 
 // Zero-or-one membership row per user, enforced by construction: the
@@ -17,7 +19,7 @@ export type Membership = {
 export async function getMyMembership(supabase: Client, userId: string): Promise<Membership | null> {
   const { data, error } = await supabase
     .from("household_members")
-    .select("household_id, role, preferences")
+    .select("household_id, role, preferences, nicknames")
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw error;
@@ -27,6 +29,7 @@ export async function getMyMembership(supabase: Client, userId: string): Promise
     householdId: data.household_id,
     role: data.role,
     themePreference: prefs.theme ?? "dark", // missing key means dark, not "system"
+    nicknames: (data.nicknames ?? {}) as Record<string, string>,
   };
 }
 
@@ -39,6 +42,23 @@ export async function setMyThemePreference(
   const { error } = await supabase
     .from("household_members")
     .update({ preferences: { theme } })
+    .eq("household_id", householdId)
+    .eq("user_id", userId);
+  if (error) throw error;
+}
+
+// Whole-map replace, like setMyThemePreference — the caller (the member-names
+// editor via HouseholdProvider) always holds the complete nicknames object in
+// state, so there's nothing to merge. Own row only (RLS: user_id = auth.uid()).
+export async function setMyNicknames(
+  supabase: Client,
+  householdId: string,
+  userId: string,
+  nicknames: Record<string, string>
+) {
+  const { error } = await supabase
+    .from("household_members")
+    .update({ nicknames })
     .eq("household_id", householdId)
     .eq("user_id", userId);
   if (error) throw error;
