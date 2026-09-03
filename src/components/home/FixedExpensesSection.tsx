@@ -33,6 +33,9 @@ export function FixedExpensesSection({
       <View className="rounded-[13px] border border-line/10 bg-card px-3.5">
         {fixedExpenses.map((f, i) => {
           const isPending = pendingIds.has(f.id);
+          // Can't post a transaction for a still-blank fixed expense — the DB
+          // rejects amount <= 0. Nudge them to set one in the editor first.
+          const needsAmount = isPending && Number(f.amount || 0) <= 0;
           return (
             <View
               key={f.id}
@@ -53,12 +56,21 @@ export function FixedExpensesSection({
               ) : (
                 <Pressable
                   onPress={() => (isPending ? onConfirm(f) : onUnconfirm(f))}
+                  disabled={needsAmount}
                   className={`min-w-[74px] items-center rounded-[20px] border px-2 py-1 ${
-                    isPending ? "border-line/20" : "border-positive/40 bg-positive/[0.12]"
+                    needsAmount
+                      ? "border-line/10"
+                      : isPending
+                        ? "border-line/20"
+                        : "border-positive/40 bg-positive/[0.12]"
                   }`}
                 >
-                  <Text className={`text-[10px] ${isPending ? "text-muted" : "text-positive"}`}>
-                    {isPending ? "Confirm" : "Paid"}
+                  <Text
+                    className={`text-[10px] ${
+                      needsAmount ? "text-muted2" : isPending ? "text-muted" : "text-positive"
+                    }`}
+                  >
+                    {needsAmount ? "Set amount" : isPending ? "Confirm" : "Paid"}
                   </Text>
                 </Pressable>
               )}

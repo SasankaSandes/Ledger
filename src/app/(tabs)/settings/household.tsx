@@ -111,6 +111,7 @@ export default function HouseholdScreen() {
     setMembers((prev) => prev.filter((m) => m.userId !== member.userId));
     try {
       await removeMember(supabase, householdId, member.userId);
+      await refresh(); // keep memberCount fresh (drives Activity's "by <who>" tag)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't remove member.");
       load();

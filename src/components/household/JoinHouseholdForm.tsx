@@ -37,7 +37,7 @@ export function JoinHouseholdForm({
     if (warnBeforeSwitch) {
       confirmAction(
         "Switch households?",
-        "You'll lose access to your current household's data — it isn't deleted, just no longer reachable by you.",
+        "You'll leave your current household. If you're its last member, it and all its data are deleted.",
         "Switch",
         doRedeem
       );

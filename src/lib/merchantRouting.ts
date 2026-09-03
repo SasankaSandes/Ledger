@@ -77,9 +77,10 @@ export async function learnMapping(
   if (selectError) throw selectError;
 
   if (existing) {
+    // updated_at is maintained by a DB trigger.
     const { error } = await supabase
       .from("merchant_map")
-      .update({ category_id: categoryId, hit_count: existing.hit_count + 1, updated_at: new Date().toISOString() })
+      .update({ category_id: categoryId, hit_count: existing.hit_count + 1 })
       .eq("id", existing.id);
     if (error) throw error;
   } else {

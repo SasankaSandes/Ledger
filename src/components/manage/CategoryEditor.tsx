@@ -49,24 +49,19 @@ export function CategoryEditor({
   // postgrest-js builder's fetch never actually fires — it's a thenable
   // that only dispatches the request from inside .then()/await, so a
   // fire-and-forget call silently does nothing).
+  // `updated_at` / `updated_by` are maintained by a DB trigger — don't send them.
   const rename = (id: string, name: string) => {
     onChange(items.map((it) => (it.id === id ? { ...it, name } : it)));
     if (renameTimers.current[id]) clearTimeout(renameTimers.current[id]);
     renameTimers.current[id] = setTimeout(async () => {
-      const { error: updateError } = await supabase
-        .from("categories")
-        .update({ name, updated_at: new Date().toISOString() })
-        .eq("id", id);
+      const { error: updateError } = await supabase.from("categories").update({ name }).eq("id", id);
       if (updateError) setError(updateError.message);
     }, RENAME_DEBOUNCE_MS);
   };
 
   const setType = async (id: string, type: "in" | "out") => {
     onChange(items.map((it) => (it.id === id ? { ...it, type } : it)));
-    const { error: updateError } = await supabase
-      .from("categories")
-      .update({ type, updated_at: new Date().toISOString() })
-      .eq("id", id);
+    const { error: updateError } = await supabase.from("categories").update({ type }).eq("id", id);
     if (updateError) setError(updateError.message);
   };
 
