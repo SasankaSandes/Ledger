@@ -51,6 +51,7 @@ export default function SettingsScreen() {
   const navRows: { label: string; subtitle: string; route: string }[] = [
     { label: "Categories", subtitle: "Cash In / Cash Out tags", route: "/settings/categories" },
     { label: "Pots", subtitle: "Budgets with spend limits", route: "/settings/pots-editor" },
+    { label: "Cards", subtitle: "Credit cards and what you owe", route: "/settings/cards" },
     { label: "Fixed expenses", subtitle: "Recurring monthly costs", route: "/settings/fixed-expenses" },
     {
       label: "Household",

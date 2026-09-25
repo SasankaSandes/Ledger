@@ -21,6 +21,19 @@ export type Pot = {
   archivedAt: string | null;
 };
 
+// A credit card. Household-scoped like Pot, with the same soft delete. A Cash
+// Out charged to a card (Transaction.cardId) is *owed*, not cash out: it stays
+// out of the month balance until a card_payment transaction settles it. What's
+// owed on a card is lifetime, not per-period — see cardOwed below.
+export type Card = {
+  id: string;
+  householdId: string;
+  name: string;
+  spendLimit: number; // monthly cap on this card's spend; 0 = no limit (same convention as Pot)
+  openingOwed: number; // already owed before the card was tracked here
+  archivedAt: string | null;
+};
+
 // A recurring expense template, linked to a Cash Out category (for the
 // transaction tag its confirms post). Never linked to a Pot — a fixed
 // expense is already accounted for, so it shouldn't also eat into a
@@ -36,19 +49,27 @@ export type FixedExpenseDef = {
   name: string;
   amount: number;
   active: boolean;
+  cardId: string | null; // default card its confirms are charged to; null = cash
 };
+
+// "card_payment" is a credit-card bill payment: cash leaves, and the owed
+// amount on transaction.cardId drops. Unlike in/out it has no category or pot.
+export type TransactionType = "in" | "out" | "card_payment";
 
 // A single logged movement of money, always belonging to one period. amount
 // is always positive; type carries the sign. potId is independent of
-// categoryId — optional, out-only, chosen per transaction.
+// categoryId — optional, out-only, chosen per transaction. cardId means
+// "charged to this card" on an out (owed, not yet cash out), or "the card
+// being paid" on a card_payment; always null on an in.
 export type Transaction = {
   id: string;
   householdId: string;
   periodId: string;
-  categoryId: string;
+  categoryId: string | null; // null only for card_payment
   potId: string | null;
+  cardId: string | null;
   fixedExpenseId: string | null; // set only when posted via "confirm" on a fixed expense
-  type: "in" | "out";
+  type: TransactionType;
   amount: number;
   desc: string;
   date: string; // ISO YYYY-MM-DD, defaults to today at add time
@@ -71,10 +92,12 @@ export type Period = {
   openingBalance: number;
 };
 
-// Shared column list for every `.from("transactions").select(...)` call —
-// one place to update if the shape changes, instead of six.
+// Shared column lists for every `.select(...)` on these tables — one place to
+// update if a shape changes, instead of one per screen.
 export const TRANSACTION_COLUMNS =
-  "id, household_id, period_id, category_id, pot_id, fixed_expense_id, type, amount, description, date, created_by";
+  "id, household_id, period_id, category_id, pot_id, card_id, fixed_expense_id, type, amount, description, date, created_by";
+export const CARD_COLUMNS = "id, household_id, name, spend_limit, opening_owed, archived_at";
+export const FIXED_EXPENSE_COLUMNS = "id, household_id, category_id, name, amount, active, card_id";
 
 export function monthKey(d: Date = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -142,12 +165,42 @@ export function potRemaining(pot: Pot, transactions: Transaction[]): number {
   return Math.max(0, pot.spendLimit - potSpent(pot.id, transactions));
 }
 
-// The hero number: opening balance plus everything logged this period,
-// cash in minus cash out.
+export function sumCashIn(transactions: Transaction[]): number {
+  return sumItems(transactions.filter((t) => t.type === "in"));
+}
+
+// Cash that actually left this period: cash spend plus card bill payments.
+// Spend charged to a card is deliberately excluded — it's owed, not paid,
+// until a card_payment settles it.
+export function sumCashOut(transactions: Transaction[]): number {
+  return sumItems(transactions.filter((t) => t.type === "card_payment" || (t.type === "out" && !t.cardId)));
+}
+
+// Spend charged to any card this period — the "owed, not yet paid" side.
+export function sumCardSpend(transactions: Transaction[]): number {
+  return sumItems(transactions.filter((t) => t.type === "out" && !!t.cardId));
+}
+
+// The hero number: opening balance plus cash in, minus the cash that
+// actually left (cash spend + card bill payments).
 export function monthBalance(period: Period, transactions: Transaction[]): number {
-  const cashIn = sumItems(transactions.filter((t) => t.type === "in"));
-  const cashOut = sumItems(transactions.filter((t) => t.type === "out"));
-  return period.openingBalance + cashIn - cashOut;
+  return period.openingBalance + sumCashIn(transactions) - sumCashOut(transactions);
+}
+
+// Lifetime totals for one card, from the card_balances view: everything ever
+// charged to it and everything ever paid toward it, across all periods.
+export type CardBalance = { spent: number; paid: number };
+
+// What's owed on a card right now: what it started with, plus every charge,
+// minus every payment. Can go negative if overpaid.
+export function cardOwed(card: Card, balance: CardBalance | undefined): number {
+  return card.openingOwed + (balance?.spent ?? 0) - (balance?.paid ?? 0);
+}
+
+// Charged to a card within the given transactions (normally one period) —
+// what its monthly spend limit is measured against. Payments don't count.
+export function cardSpent(cardId: string, transactions: Transaction[]): number {
+  return sumItems(transactions.filter((t) => t.type === "out" && t.cardId === cardId));
 }
 
 // Every active fixed expense that hasn't been confirmed (posted as a
@@ -198,6 +251,24 @@ export function potFromRow(row: {
   };
 }
 
+export function cardFromRow(row: {
+  id: string;
+  household_id: string;
+  name: string;
+  spend_limit: number;
+  opening_owed: number;
+  archived_at: string | null;
+}): Card {
+  return {
+    id: row.id,
+    householdId: row.household_id,
+    name: row.name,
+    spendLimit: Number(row.spend_limit),
+    openingOwed: Number(row.opening_owed),
+    archivedAt: row.archived_at,
+  };
+}
+
 export function fixedExpenseDefFromRow(row: {
   id: string;
   household_id: string;
@@ -205,6 +276,7 @@ export function fixedExpenseDefFromRow(row: {
   name: string;
   amount: number;
   active: boolean;
+  card_id: string | null;
 }): FixedExpenseDef {
   return {
     id: row.id,
@@ -213,6 +285,7 @@ export function fixedExpenseDefFromRow(row: {
     name: row.name,
     amount: row.amount,
     active: row.active,
+    cardId: row.card_id,
   };
 }
 
@@ -220,10 +293,11 @@ export function transactionFromRow(row: {
   id: string;
   household_id: string;
   period_id: string;
-  category_id: string;
+  category_id: string | null;
   pot_id: string | null;
+  card_id: string | null;
   fixed_expense_id: string | null;
-  type: "in" | "out";
+  type: TransactionType;
   amount: number;
   description: string; // DB column is "description" — "desc" is a reserved SQL keyword
   date: string;
@@ -235,6 +309,7 @@ export function transactionFromRow(row: {
     periodId: row.period_id,
     categoryId: row.category_id,
     potId: row.pot_id,
+    cardId: row.card_id,
     fixedExpenseId: row.fixed_expense_id,
     type: row.type,
     amount: row.amount,

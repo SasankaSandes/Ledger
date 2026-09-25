@@ -5,29 +5,37 @@ import { Screen } from "@/components/ui/Screen";
 import { Keypad } from "@/components/quickadd/Keypad";
 import { CategoryChipRow } from "@/components/quickadd/CategoryChipRow";
 import { PotChipRow } from "@/components/quickadd/PotChipRow";
+import { PayModeField, type PayMode } from "@/components/quickadd/PayModeField";
 import { DateField } from "@/components/ui/DateField";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
 import { confirmAction } from "@/lib/confirm";
+import { loadCards } from "@/lib/cards";
 import {
+  CARD_COLUMNS,
   TRANSACTION_COLUMNS,
+  cardFromRow,
   categoryFromRow,
   fmt,
   potFromRow,
   todayKey,
   transactionFromRow,
+  type Card,
   type Category,
   type Pot,
+  type TransactionType,
 } from "@/lib/types";
 
 const CATEGORY_COLUMNS = "id, household_id, name, type, archived_at";
 const POT_COLUMNS = "id, household_id, name, spend_limit, archived_at";
 
 // Presented as a modal (see src/app/_layout.tsx), opened from a tapped row in
-// Activity with ?id=<txnId>. Edits value, category, pot, date and description —
-// type (Cash In/Out) is fixed, and period_id never changes, so a back-dated
-// edit only moves the date label/sort, not which month the transaction counts
-// in. Every save is one plain update; no merchant-map learning (that's a
+// Activity with ?id=<txnId>. Edits value, category, pot, paid-with (cash or a
+// card), date and description — type (Cash In/Out/Card payment) is fixed, and
+// period_id never changes, so a back-dated edit only moves the date
+// label/sort, not which month the transaction counts in. A card payment has
+// no category, pot or pay mode — just amount, card, date and description.
+// Every save is one plain update; no merchant-map learning (that's a
 // fresh-entry affordance, not a correction one).
 export default function EditTransactionScreen() {
   const { householdId } = useHousehold();
@@ -36,20 +44,23 @@ export default function EditTransactionScreen() {
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
   const [pots, setPots] = useState<Pot[]>([]);
+  const [cards, setCards] = useState<Card[]>([]);
 
-  const [type, setType] = useState<"in" | "out">("out");
+  const [type, setType] = useState<TransactionType>("out");
   const [digits, setDigits] = useState("");
   const [desc, setDesc] = useState("");
   const [date, setDate] = useState(todayKey());
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedPotId, setSelectedPotId] = useState<string | null>(null);
+  const [payMode, setPayMode] = useState<PayMode>("cash");
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!householdId || !id) return;
     (async () => {
-      const [{ data: txnRow }, { data: catData }, { data: potData }] = await Promise.all([
+      const [{ data: txnRow }, { data: catData }, { data: potData }, cardList] = await Promise.all([
         supabase.from("transactions").select(TRANSACTION_COLUMNS).eq("id", id).single(),
         supabase
           .from("categories")
@@ -63,6 +74,7 @@ export default function EditTransactionScreen() {
           .eq("household_id", householdId)
           .is("archived_at", null)
           .order("created_at", { ascending: true }),
+        loadCards(supabase, householdId),
       ]);
 
       if (!txnRow) {
@@ -73,10 +85,11 @@ export default function EditTransactionScreen() {
       const txn = transactionFromRow(txnRow);
       let cats = (catData ?? []).map(categoryFromRow);
       let potList = (potData ?? []).map(potFromRow);
+      let cardsList = cardList;
 
-      // The transaction's current category/pot may have been archived since —
-      // pull that one row back in so it stays visible and swappable.
-      if (!cats.some((c) => c.id === txn.categoryId)) {
+      // The transaction's current category/pot/card may have been archived
+      // since — pull that one row back in so it stays visible and swappable.
+      if (txn.categoryId && !cats.some((c) => c.id === txn.categoryId)) {
         const { data } = await supabase.from("categories").select(CATEGORY_COLUMNS).eq("id", txn.categoryId).single();
         if (data) cats = [...cats, categoryFromRow(data)];
       }
@@ -85,14 +98,22 @@ export default function EditTransactionScreen() {
         if (data) potList = [...potList, potFromRow(data)];
       }
 
+      if (txn.cardId && !cardsList.some((c) => c.id === txn.cardId)) {
+        const { data } = await supabase.from("cards").select(CARD_COLUMNS).eq("id", txn.cardId).single();
+        if (data) cardsList = [...cardsList, cardFromRow(data)];
+      }
+
       setCategories(cats);
       setPots(potList);
+      setCards(cardsList);
       setType(txn.type);
       setDigits(String(txn.amount));
       setDesc(txn.desc);
       setDate(txn.date);
       setSelectedCategoryId(txn.categoryId);
       setSelectedPotId(txn.potId);
+      setSelectedCardId(txn.cardId);
+      setPayMode(txn.type === "out" && txn.cardId ? "credit" : "cash");
       setLoading(false);
     })();
   }, [householdId, id]);
@@ -100,7 +121,12 @@ export default function EditTransactionScreen() {
   const categoriesForType = categories.filter((c) => c.type === type);
   const selectedCategory = categoriesForType.find((c) => c.id === selectedCategoryId) ?? null;
   const amount = Number(digits || "0");
-  const canSave = amount > 0 && !!selectedCategory;
+  const isPayment = type === "card_payment";
+  const chargedCard = type === "out" && payMode === "credit" ? (cards.find((c) => c.id === selectedCardId) ?? null) : null;
+  const paidCard = isPayment ? (cards.find((c) => c.id === selectedCardId) ?? null) : null;
+  const canSave =
+    amount > 0 &&
+    (isPayment ? !!paidCard : !!selectedCategory && !(type === "out" && payMode === "credit" && !chargedCard));
 
   const createCategory = async (name: string) => {
     if (!householdId) return;
@@ -128,21 +154,38 @@ export default function EditTransactionScreen() {
     setSelectedPotId(created.id);
   };
 
+  const createCard = async (name: string) => {
+    if (!householdId) return;
+    const { data } = await supabase.from("cards").insert({ household_id: householdId, name }).select(CARD_COLUMNS).single();
+    if (!data) return;
+    const created = cardFromRow(data);
+    setCards((cur) => [...cur, created]);
+    setSelectedCardId(created.id);
+  };
+
   const save = async () => {
-    if (!id || !selectedCategory || !canSave) return;
+    if (!id || !canSave) return;
     setSaving(true);
     setError(null);
     try {
-      const { error: updateError } = await supabase
-        .from("transactions")
-        .update({
-          amount,
-          category_id: selectedCategory.id,
-          pot_id: type === "out" ? selectedPotId : null,
-          description: desc.trim() || selectedCategory.name,
-          date,
-        })
-        .eq("id", id);
+      // A card payment is only ever amount + card + date + description; the
+      // DB shape check rejects a category or pot on it, so don't send either.
+      const changes = isPayment
+        ? {
+            amount,
+            card_id: paidCard?.id,
+            description: desc.trim() || `${paidCard?.name} payment`,
+            date,
+          }
+        : {
+            amount,
+            category_id: selectedCategory?.id,
+            pot_id: type === "out" ? selectedPotId : null,
+            card_id: chargedCard?.id ?? null,
+            description: desc.trim() || selectedCategory?.name,
+            date,
+          };
+      const { error: updateError } = await supabase.from("transactions").update(changes).eq("id", id);
       if (updateError) throw updateError;
       router.back();
     } catch (err) {
@@ -176,7 +219,7 @@ export default function EditTransactionScreen() {
           <View className="flex-row items-baseline gap-2">
             <Text className="font-display text-[20px] text-text">Edit</Text>
             <Text className="text-[11px] uppercase tracking-wider text-muted">
-              {type === "out" ? "Cash Out" : "Cash In"}
+              {type === "out" ? "Cash Out" : type === "in" ? "Cash In" : "Card payment"}
             </Text>
           </View>
           <Pressable onPress={() => router.back()} hitSlop={8}>
@@ -193,7 +236,13 @@ export default function EditTransactionScreen() {
         <TextInput
           value={desc}
           onChangeText={setDesc}
-          placeholder={type === "out" ? "lunch, keells groceries, uber…" : "salary, freelance, gift…"}
+          placeholder={
+            type === "out"
+              ? "lunch, keells groceries, uber…"
+              : type === "in"
+                ? "salary, freelance, gift…"
+                : "card payment"
+          }
           placeholderTextColor="#5C6070"
           className="mt-3 rounded-lg border border-line/10 bg-input px-3 py-2.5 text-[13px] text-text"
         />
@@ -202,19 +251,53 @@ export default function EditTransactionScreen() {
           <DateField value={date} onChange={setDate} maximumDate={new Date()} />
         </View>
 
-        <View className="mt-3.5">
-          <CategoryChipRow
-            categories={categoriesForType}
-            selectedId={selectedCategoryId}
-            onSelect={setSelectedCategoryId}
-            onCreate={createCategory}
-          />
-        </View>
+        {isPayment ? (
+          <View className="mt-3.5">
+            <Text className="mb-1.5 text-[10.5px] uppercase tracking-wider text-muted">Card</Text>
+            <View className="flex-row flex-wrap gap-1.5">
+              {cards.map((c) => (
+                <Pressable
+                  key={c.id}
+                  onPress={() => setSelectedCardId(c.id)}
+                  className={`rounded-full border px-2.5 py-1 ${
+                    selectedCardId === c.id ? "border-gold/40 bg-gold/[0.1]" : "border-line/15"
+                  }`}
+                >
+                  <Text className={`text-[11px] ${selectedCardId === c.id ? "text-gold" : "text-muted"}`}>
+                    {c.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : (
+          <View className="mt-3.5">
+            <CategoryChipRow
+              categories={categoriesForType}
+              selectedId={selectedCategoryId}
+              onSelect={setSelectedCategoryId}
+              onCreate={createCategory}
+            />
+          </View>
+        )}
 
         {type === "out" && (
           <View className="mt-3">
             <Text className="mb-1.5 text-[10.5px] uppercase tracking-wider text-muted">Pot (optional)</Text>
             <PotChipRow pots={pots} selectedId={selectedPotId} onSelect={setSelectedPotId} onCreate={createPot} />
+          </View>
+        )}
+
+        {type === "out" && (
+          <View className="mt-3">
+            <PayModeField
+              payMode={payMode}
+              onPayModeChange={setPayMode}
+              cards={cards}
+              selectedCardId={selectedCardId}
+              onSelectCard={setSelectedCardId}
+              onCreateCard={createCard}
+            />
           </View>
         )}
 

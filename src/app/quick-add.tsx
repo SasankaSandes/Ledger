@@ -5,16 +5,21 @@ import { Screen } from "@/components/ui/Screen";
 import { Keypad } from "@/components/quickadd/Keypad";
 import { CategoryChipRow } from "@/components/quickadd/CategoryChipRow";
 import { PotChipRow } from "@/components/quickadd/PotChipRow";
+import { PayModeField, type PayMode } from "@/components/quickadd/PayModeField";
 import { DateField } from "@/components/ui/DateField";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
 import { ensureOpenPeriod } from "@/lib/period";
+import { loadCards } from "@/lib/cards";
 import { inferCategory, learnMapping, loadMerchantMap } from "@/lib/merchantRouting";
 import {
+  CARD_COLUMNS,
+  cardFromRow,
   categoryFromRow,
   fmt,
   potFromRow,
   todayKey,
+  type Card,
   type Category,
   type MerchantMapEntry,
   type Period,
@@ -24,15 +29,18 @@ import {
 type Mode = "out" | "in";
 
 // Presented as a modal (see src/app/_layout.tsx) from the center tab-bar
-// "+" button. Owns its own period/category/pot/merchant-map load — a
+// "+" button. Owns its own period/category/pot/card/merchant-map load — a
 // separate route from Home, not sharing its in-memory state. Every confirm
 // is one plain insert into `transactions`; category is always required,
-// pot is an optional, independent choice only offered for Cash Out.
+// pot is an optional, independent choice only offered for Cash Out, and so
+// is "paid with" — Cash Out on Credit is charged to a card (owed, not yet
+// cash out) and requires picking one. Card bill payments live on Home.
 export default function QuickAddScreen() {
   const { householdId } = useHousehold();
   const [period, setPeriod] = useState<Period | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [pots, setPots] = useState<Pot[]>([]);
+  const [cards, setCards] = useState<Card[]>([]);
   const [merchantMap, setMerchantMap] = useState<MerchantMapEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -43,6 +51,8 @@ export default function QuickAddScreen() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [categoryManuallySet, setCategoryManuallySet] = useState(false);
   const [selectedPotId, setSelectedPotId] = useState<string | null>(null);
+  const [payMode, setPayMode] = useState<PayMode>("cash");
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [justAdded, setJustAdded] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +60,7 @@ export default function QuickAddScreen() {
   useEffect(() => {
     if (!householdId) return;
     (async () => {
-      const [openPeriod, { data: catData }, { data: potData }, merchants] = await Promise.all([
+      const [openPeriod, { data: catData }, { data: potData }, cardList, merchants] = await Promise.all([
         ensureOpenPeriod(supabase, householdId),
         supabase
           .from("categories")
@@ -64,11 +74,13 @@ export default function QuickAddScreen() {
           .eq("household_id", householdId)
           .is("archived_at", null)
           .order("created_at", { ascending: true }),
+        loadCards(supabase, householdId),
         loadMerchantMap(supabase, householdId),
       ]);
       setPeriod(openPeriod);
       setCategories((catData ?? []).map(categoryFromRow));
       setPots((potData ?? []).map(potFromRow));
+      setCards(cardList);
       setMerchantMap(merchants);
       setLoading(false);
     })();
@@ -97,6 +109,8 @@ export default function QuickAddScreen() {
     setMode(m);
     setCategoryManuallySet(false);
     setSelectedPotId(null);
+    setPayMode("cash");
+    setSelectedCardId(null);
     const guess = inferCategory(desc, categories, merchantMap, m);
     setSelectedCategoryId(guess?.id ?? null);
   };
@@ -128,6 +142,19 @@ export default function QuickAddScreen() {
     setSelectedPotId(created.id);
   };
 
+  const createCard = async (name: string) => {
+    if (!householdId) return;
+    const { data, error: insertError } = await supabase
+      .from("cards")
+      .insert({ household_id: householdId, name })
+      .select(CARD_COLUMNS)
+      .single();
+    if (insertError || !data) return;
+    const created = cardFromRow(data);
+    setCards((cur) => [...cur, created]);
+    setSelectedCardId(created.id);
+  };
+
   const resetForm = () => {
     setDigits("");
     setDesc("");
@@ -135,10 +162,14 @@ export default function QuickAddScreen() {
     setSelectedCategoryId(null);
     setCategoryManuallySet(false);
     setSelectedPotId(null);
+    setPayMode("cash");
+    setSelectedCardId(null);
   };
 
   const amount = Number(digits || "0");
-  const canConfirm = amount > 0 && !!selectedCategory;
+  const chargedCard = mode === "out" && payMode === "credit" ? (cards.find((c) => c.id === selectedCardId) ?? null) : null;
+  const needsCard = mode === "out" && payMode === "credit" && !chargedCard;
+  const canConfirm = amount > 0 && !!selectedCategory && !needsCard;
 
   const confirm = async () => {
     if (!householdId || !period || !selectedCategory || !canConfirm) return;
@@ -150,13 +181,14 @@ export default function QuickAddScreen() {
         period_id: period.id,
         category_id: selectedCategory.id,
         pot_id: mode === "out" ? selectedPotId : null,
+        card_id: chargedCard?.id ?? null,
         type: mode,
         amount,
         description: desc.trim() || selectedCategory.name,
         date,
       });
       if (insertError) throw insertError;
-      setJustAdded(`Added to ${selectedCategory.name}`);
+      setJustAdded(`Added to ${selectedCategory.name}${chargedCard ? ` · ${chargedCard.name}` : ""}`);
 
       if (desc.trim()) {
         await learnMapping(supabase, householdId, desc, selectedCategory.id, mode);
@@ -236,6 +268,19 @@ export default function QuickAddScreen() {
           <View className="mt-3">
             <Text className="mb-1.5 text-[10.5px] uppercase tracking-wider text-muted">Pot (optional)</Text>
             <PotChipRow pots={pots} selectedId={selectedPotId} onSelect={setSelectedPotId} onCreate={createPot} />
+          </View>
+        )}
+
+        {mode === "out" && (
+          <View className="mt-3">
+            <PayModeField
+              payMode={payMode}
+              onPayModeChange={setPayMode}
+              cards={cards}
+              selectedCardId={selectedCardId}
+              onSelectCard={setSelectedCardId}
+              onCreateCard={createCard}
+            />
           </View>
         )}
 

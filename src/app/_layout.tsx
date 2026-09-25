@@ -81,6 +81,7 @@ function ThemedRoot() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="quick-add" options={{ presentation: "modal" }} />
           <Stack.Screen name="edit-transaction" options={{ presentation: "modal" }} />
+          <Stack.Screen name="pay-card" options={{ presentation: "modal" }} />
         </Stack.Protected>
 
         <Stack.Screen name="auth/callback" />

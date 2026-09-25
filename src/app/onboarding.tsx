@@ -83,6 +83,7 @@ export default function OnboardingScreen() {
             <FixedExpenseEditor
               householdId={householdId}
               outCategories={outCategories}
+              cards={[]} // brand-new household — cards come later, from Settings
               items={fixedExpenses}
               onChange={setFixedExpenses}
             />

@@ -6,6 +6,7 @@ import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
 import { ensureOpenPeriod } from "@/lib/period";
 import {
+  FIXED_EXPENSE_COLUMNS,
   TRANSACTION_COLUMNS,
   categoryFromRow,
   fixedExpenseDefFromRow,
@@ -48,7 +49,7 @@ export default function PotsScreen() {
         .order("created_at", { ascending: true }),
       supabase
         .from("fixed_expenses")
-        .select("id, household_id, category_id, name, amount, active")
+        .select(FIXED_EXPENSE_COLUMNS)
         .eq("household_id", householdId)
         .eq("active", true)
         .order("created_at", { ascending: true }),

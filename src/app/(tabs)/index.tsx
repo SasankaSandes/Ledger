@@ -6,20 +6,30 @@ import { TodaySummaryCard } from "@/components/home/TodaySummaryCard";
 import { CoachStrip } from "@/components/home/CoachStrip";
 import { PotCard } from "@/components/home/PotCard";
 import { FixedExpensesSection } from "@/components/home/FixedExpensesSection";
+import { CardsSection } from "@/components/home/CardsSection";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
 import { ensureOpenPeriod, listMonths } from "@/lib/period";
 import { confirmFixedExpense, unconfirmFixedExpense } from "@/lib/fixedExpenses";
+import { loadCardBalances, loadCards } from "@/lib/cards";
 import {
+  FIXED_EXPENSE_COLUMNS,
   TRANSACTION_COLUMNS,
+  cardOwed,
+  cardSpent,
   fixedExpenseDefFromRow,
   fmt,
   monthBalance,
   monthKeyToLabel,
   potFromRow,
   potSpent,
+  sumCardSpend,
+  sumCashIn,
+  sumCashOut,
   sumItems,
   transactionFromRow,
+  type Card,
+  type CardBalance,
   type FixedExpenseDef,
   type Period,
   type Pot,
@@ -31,6 +41,8 @@ export default function HomeScreen() {
   const [periods, setPeriods] = useState<Period[]>([]);
   const [viewedIndex, setViewedIndex] = useState(0);
   const [pots, setPots] = useState<Pot[]>([]);
+  const [cards, setCards] = useState<Card[]>([]);
+  const [cardBalances, setCardBalances] = useState<Record<string, CardBalance>>({});
   const [fixedExpenses, setFixedExpenses] = useState<FixedExpenseDef[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,7 +63,7 @@ export default function HomeScreen() {
   const loadStructure = useCallback(async () => {
     if (!householdId) return;
     await ensureOpenPeriod(supabase, householdId);
-    const [allPeriods, { data: potData }, { data: fixedData }] = await Promise.all([
+    const [allPeriods, { data: potData }, { data: fixedData }, cardList, balances] = await Promise.all([
       listMonths(supabase, householdId),
       supabase
         .from("pots")
@@ -61,13 +73,17 @@ export default function HomeScreen() {
         .order("created_at", { ascending: true }),
       supabase
         .from("fixed_expenses")
-        .select("id, household_id, category_id, name, amount, active")
+        .select(FIXED_EXPENSE_COLUMNS)
         .eq("household_id", householdId)
         .eq("active", true)
         .order("created_at", { ascending: true }),
+      loadCards(supabase, householdId),
+      loadCardBalances(supabase, householdId),
     ]);
     setPeriods(allPeriods);
     setPots((potData ?? []).map(potFromRow));
+    setCards(cardList);
+    setCardBalances(balances);
     setFixedExpenses((fixedData ?? []).map(fixedExpenseDefFromRow));
     setLoading(false);
   }, [householdId]);
@@ -82,9 +98,10 @@ export default function HomeScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewedPeriod?.id]);
 
-  // Quick Add and Settings write to this same household from separate
-  // routes — re-load on every focus so a just-added transaction, pot,
-  // category, or fixed expense shows up the moment the user backs out.
+  // Quick Add, Pay card bill and Settings write to this same household from
+  // separate routes — re-load on every focus so a just-added transaction,
+  // card payment, pot, category, or fixed expense shows up the moment the
+  // user backs out.
   useFocusEffect(
     useCallback(() => {
       loadStructure();
@@ -103,18 +120,24 @@ export default function HomeScreen() {
     );
   }
 
-  const cashInTotal = sumItems(transactions.filter((t) => t.type === "in"));
-  const cashOutTotal = sumItems(transactions.filter((t) => t.type === "out"));
+  const cashInTotal = sumCashIn(transactions);
+  const cashOutTotal = sumCashOut(transactions);
   const balance = monthBalance(viewedPeriod, transactions);
+  const cardsOwedTotal = cards.reduce((s, c) => s + cardOwed(c, cardBalances[c.id]), 0);
   const potAllocation = pots.reduce((s, p) => s + p.spendLimit, 0);
   const fixedExpensesTotal = sumItems(fixedExpenses);
 
   const potsOver = pots.filter((p) => p.spendLimit > 0 && potSpent(p.id, transactions) > p.spendLimit);
 
+  const cardsOver = cards.filter((c) => c.spendLimit > 0 && cardSpent(c.id, transactions) > c.spendLimit);
+
   let coachText = "";
   if (potsOver.length > 0) {
     const op = potsOver[0];
     coachText = `${op.name} is ${fmt(potSpent(op.id, transactions) - op.spendLimit)} past its limit.`;
+  } else if (cardsOver.length > 0) {
+    const oc = cardsOver[0];
+    coachText = `${oc.name} is ${fmt(cardSpent(oc.id, transactions) - oc.spendLimit)} past its monthly limit.`;
   }
   const showCoach = !coachDismissed && !!coachText;
 
@@ -122,12 +145,14 @@ export default function HomeScreen() {
     if (!viewedPeriod) return;
     const txn = await confirmFixedExpense(supabase, viewedPeriod, fe);
     setTransactions((cur) => [txn, ...cur]);
+    if (fe.cardId && householdId) setCardBalances(await loadCardBalances(supabase, householdId));
   };
 
   const unconfirmFixed = async (fe: FixedExpenseDef) => {
     if (!viewedPeriod) return;
     await unconfirmFixedExpense(supabase, viewedPeriod.id, fe.id);
     setTransactions((cur) => cur.filter((t) => t.fixedExpenseId !== fe.id));
+    if (fe.cardId && householdId) setCardBalances(await loadCardBalances(supabase, householdId));
   };
 
   return (
@@ -171,6 +196,11 @@ export default function HomeScreen() {
             cashOut={cashOutTotal}
             potAllocation={potAllocation}
             fixedExpensesTotal={fixedExpensesTotal}
+            cards={
+              cards.length > 0
+                ? { spendThisMonth: sumCardSpend(transactions), owed: cardsOwedTotal }
+                : undefined
+            }
           />
         </View>
 
@@ -195,6 +225,15 @@ export default function HomeScreen() {
             <Text className="text-[12.5px] text-muted2">No pots yet — add one from Settings.</Text>
           )}
         </View>
+
+        <CardsSection
+          cards={cards}
+          transactions={transactions}
+          balances={cardBalances}
+          onOpen={(card) => router.push(`/activity?card=${card.id}`)}
+          onPay={(card) => router.push(`/pay-card?card=${card.id}`)}
+          readOnly={!isOpen}
+        />
 
         <FixedExpensesSection
           fixedExpenses={fixedExpenses}

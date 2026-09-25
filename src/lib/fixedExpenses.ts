@@ -10,7 +10,9 @@ import {
 
 // Posts a fixed expense's expected transaction for the current period.
 // `amount` is optionally overridable at confirm time if the actual bill
-// differs from the template — defaults to the template's own amount.
+// differs from the template — defaults to the template's own amount. If the
+// fixed expense has a default card, the transaction is charged to it (owed,
+// not cash out); otherwise it's a plain cash expense.
 export async function confirmFixedExpense(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: SupabaseClient<any, any, any>,
@@ -24,6 +26,7 @@ export async function confirmFixedExpense(
       household_id: fixedExpense.householdId,
       period_id: period.id,
       category_id: fixedExpense.categoryId,
+      card_id: fixedExpense.cardId,
       fixed_expense_id: fixedExpense.id,
       type: "out",
       amount: amount ?? fixedExpense.amount,

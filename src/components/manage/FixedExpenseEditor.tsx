@@ -2,7 +2,13 @@ import { useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { supabase } from "@/lib/supabase/client";
 import { confirmAction } from "@/lib/confirm";
-import { fixedExpenseDefFromRow, type Category, type FixedExpenseDef } from "@/lib/types";
+import {
+  FIXED_EXPENSE_COLUMNS,
+  fixedExpenseDefFromRow,
+  type Card,
+  type Category,
+  type FixedExpenseDef,
+} from "@/lib/types";
 import { AmountInput } from "@/components/ui/AmountInput";
 
 const RENAME_DEBOUNCE_MS = 500;
@@ -11,15 +17,19 @@ const RENAME_DEBOUNCE_MS = 500;
 // its transaction tag — never to a Pot (a fixed expense is already
 // accounted for, so its confirms shouldn't also eat into a budget's
 // limit). `outCategories` is the household's Cash Out categories to pick
-// from; a new fixed expense defaults to the first one.
+// from; a new fixed expense defaults to the first one. Each can also have a
+// default card: confirming it then charges that card (owed, not cash out)
+// instead of posting a cash expense. Hidden until the household has a card.
 export function FixedExpenseEditor({
   householdId,
   outCategories,
+  cards,
   items,
   onChange,
 }: {
   householdId: string;
   outCategories: Category[];
+  cards: Card[];
   items: FixedExpenseDef[];
   onChange: (next: FixedExpenseDef[]) => void;
 }) {
@@ -36,7 +46,7 @@ export function FixedExpenseEditor({
     const { data, error: insertError } = await supabase
       .from("fixed_expenses")
       .insert({ household_id: householdId, category_id: outCategories[0].id, name, amount: 0, active: true })
-      .select("id, household_id, category_id, name, amount, active")
+      .select(FIXED_EXPENSE_COLUMNS)
       .single();
     setAdding(false);
     if (insertError || !data) {
@@ -73,6 +83,12 @@ export function FixedExpenseEditor({
       .from("fixed_expenses")
       .update({ category_id: categoryId })
       .eq("id", id);
+    if (updateError) setError(updateError.message);
+  };
+
+  const setCard = async (id: string, cardId: string | null) => {
+    onChange(items.map((it) => (it.id === id ? { ...it, cardId } : it)));
+    const { error: updateError } = await supabase.from("fixed_expenses").update({ card_id: cardId }).eq("id", id);
     if (updateError) setError(updateError.message);
   };
 
@@ -128,6 +144,22 @@ export function FixedExpenseEditor({
               </Pressable>
             ))}
           </View>
+          {cards.length > 0 && (
+            <View className="mt-2 flex-row flex-wrap items-center gap-1.5">
+              <Text className="mr-0.5 text-[10.5px] uppercase tracking-wider text-muted2">Paid with</Text>
+              {[{ id: null as string | null, name: "Cash" }, ...cards].map((c) => (
+                <Pressable
+                  key={c.id ?? "cash"}
+                  onPress={() => setCard(it.id, c.id)}
+                  className={`rounded-full border px-2.5 py-1 ${
+                    it.cardId === c.id ? "border-gold/40 bg-gold/[0.1]" : "border-line/15"
+                  }`}
+                >
+                  <Text className={`text-[11px] ${it.cardId === c.id ? "text-gold" : "text-muted"}`}>{c.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
         </View>
       ))}
       <View className="flex-row gap-1.5">
