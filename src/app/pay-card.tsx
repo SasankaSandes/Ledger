@@ -3,12 +3,14 @@ import { router, useLocalSearchParams } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { Keypad } from "@/components/quickadd/Keypad";
+import { AmountDisplay } from "@/components/quickadd/AmountDisplay";
 import { DateField } from "@/components/ui/DateField";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
 import { ensureOpenPeriod } from "@/lib/period";
 import { loadCardBalances, loadCards, payCardBill } from "@/lib/cards";
-import { cardOwed, fmt, todayKey, type Card, type CardBalance, type Period } from "@/lib/types";
+import { parseAmount, round2 } from "@/lib/amount";
+import { cardOwed, fmtExact, todayKey, type Card, type CardBalance, type Period } from "@/lib/types";
 
 // Presented as a modal (see src/app/_layout.tsx), opened from the "Pay"
 // button on a card row on Home with ?card=<cardId>. Records a card bill
@@ -24,7 +26,7 @@ export default function PayCardScreen() {
   const [cards, setCards] = useState<Card[]>([]);
   const [balances, setBalances] = useState<Record<string, CardBalance>>({});
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
-  const [digits, setDigits] = useState("");
+  const [amountText, setAmountText] = useState("");
   const [date, setDate] = useState(todayKey());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +56,7 @@ export default function PayCardScreen() {
 
   const card = cards.find((c) => c.id === selectedCardId) ?? null;
   const owed = card ? cardOwed(card, balances[card.id]) : 0;
-  const amount = Number(digits || "0");
+  const amount = parseAmount(amountText);
   const canPay = amount > 0 && !!card && !!period;
 
   const pay = async () => {
@@ -117,15 +119,15 @@ export default function PayCardScreen() {
             )}
 
             <View className="mt-6 items-center">
-              <Text className="font-mono text-[38px] text-text">{fmt(amount)}</Text>
+              <AmountDisplay text={amountText} />
               <Text className="mt-1 h-4 text-[12px] text-muted2">
-                {card ? `${card.name} · owed ${fmt(owed)}` : "Pick a card"}
+                {card ? `${card.name} · owed ${fmtExact(owed)}` : "Pick a card"}
               </Text>
             </View>
 
             {card && owed > 0 && (
               <Pressable
-                onPress={() => setDigits(String(Math.round(owed)))}
+                onPress={() => setAmountText(String(round2(owed)))}
                 hitSlop={6}
                 className="mt-2 items-center"
               >
@@ -141,10 +143,7 @@ export default function PayCardScreen() {
 
         <View className="flex-1" />
 
-        <Keypad
-          onDigit={(d) => setDigits((cur) => (cur.length >= 9 ? cur : cur + d))}
-          onBackspace={() => setDigits((cur) => cur.slice(0, -1))}
-        />
+        <Keypad value={amountText} onChange={setAmountText} />
 
         <Pressable
           onPress={pay}

@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { supabase } from "@/lib/supabase/client";
 import { confirmAction } from "@/lib/confirm";
-import { CARD_COLUMNS, cardFromRow, cardOwed, fmt, type Card, type CardBalance } from "@/lib/types";
+import { CARD_COLUMNS, cardFromRow, cardOwed, fmtExact, type Card, type CardBalance } from "@/lib/types";
 import { AmountInput } from "@/components/ui/AmountInput";
 
 const RENAME_DEBOUNCE_MS = 500;
@@ -90,7 +90,7 @@ export function CardEditor({
     const owed = cardOwed(item, balances[item.id]);
     const message =
       owed > 0
-        ? `You still owe ${fmt(owed)} on it. Past transactions keep it, but it'll disappear from pickers and Home.`
+        ? `You still owe ${fmtExact(owed)} on it. Past transactions keep it, but it'll disappear from pickers and Home.`
         : "Past transactions keep it, but it'll disappear from pickers.";
     confirmAction(`Remove "${item.name}"?`, message, "Remove", () => archive(item.id));
   };
@@ -124,13 +124,14 @@ export function CardEditor({
             <Text className="flex-1 text-[11px] text-muted2">Already owed</Text>
             <AmountInput
               value={it.openingOwed}
+              decimals={2}
               onChange={(n) => setOpeningOwed(it.id, n ?? 0)}
               className={AMOUNT_INPUT_CLASS}
             />
           </View>
           <View className="mt-2 flex-row items-center justify-between border-t border-line/5 pt-2">
             <Text className="text-[11px] text-muted2">Owed now</Text>
-            <Text className="font-mono text-[12.5px] text-text">{fmt(cardOwed(it, balances[it.id]))}</Text>
+            <Text className="font-mono text-[12.5px] text-text">{fmtExact(cardOwed(it, balances[it.id]))}</Text>
           </View>
         </View>
       ))}

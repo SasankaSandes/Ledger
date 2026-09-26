@@ -10,6 +10,7 @@ import { confirmAction } from "@/lib/confirm";
 import { loadCardBalances, loadCards } from "@/lib/cards";
 import {
   TRANSACTION_COLUMNS,
+  amountText,
   cardOwed,
   categoryFromRow,
   fmt,
@@ -326,7 +327,7 @@ export default function ActivityScreen() {
                 </View>
                 <Text className={`font-mono text-[13px] ${t.type === "in" ? "text-positive" : "text-text"}`}>
                   {t.type === "in" ? "+" : "−"}
-                  {t.amount.toLocaleString()}
+                  {amountText(t.amount)}
                 </Text>
                 <Text className="px-0.5 text-[15px] leading-none text-faint">⋮</Text>
               </Pressable>

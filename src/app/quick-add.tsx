@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { Keypad } from "@/components/quickadd/Keypad";
+import { AmountDisplay } from "@/components/quickadd/AmountDisplay";
 import { CategoryChipRow } from "@/components/quickadd/CategoryChipRow";
 import { PotChipRow } from "@/components/quickadd/PotChipRow";
 import { PayModeField, type PayMode } from "@/components/quickadd/PayModeField";
@@ -11,12 +12,12 @@ import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
 import { ensureOpenPeriod } from "@/lib/period";
 import { loadCards } from "@/lib/cards";
+import { parseAmount } from "@/lib/amount";
 import { inferCategory, learnMapping, loadMerchantMap } from "@/lib/merchantRouting";
 import {
   CARD_COLUMNS,
   cardFromRow,
   categoryFromRow,
-  fmt,
   potFromRow,
   todayKey,
   type Card,
@@ -45,7 +46,7 @@ export default function QuickAddScreen() {
   const [loading, setLoading] = useState(true);
 
   const [mode, setMode] = useState<Mode>("out");
-  const [digits, setDigits] = useState("");
+  const [amountText, setAmountText] = useState("");
   const [desc, setDesc] = useState("");
   const [date, setDate] = useState(todayKey());
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -156,7 +157,7 @@ export default function QuickAddScreen() {
   };
 
   const resetForm = () => {
-    setDigits("");
+    setAmountText("");
     setDesc("");
     setDate(todayKey());
     setSelectedCategoryId(null);
@@ -166,7 +167,7 @@ export default function QuickAddScreen() {
     setSelectedCardId(null);
   };
 
-  const amount = Number(digits || "0");
+  const amount = parseAmount(amountText);
   const chargedCard = mode === "out" && payMode === "credit" ? (cards.find((c) => c.id === selectedCardId) ?? null) : null;
   const needsCard = mode === "out" && payMode === "credit" && !chargedCard;
   const canConfirm = amount > 0 && !!selectedCategory && !needsCard;
@@ -239,7 +240,7 @@ export default function QuickAddScreen() {
         {error && <Text className="mt-2 text-[12px] text-negative">{error}</Text>}
 
         <View className="mt-6 items-center">
-          <Text className="font-mono text-[38px] text-text">{fmt(amount)}</Text>
+          <AmountDisplay text={amountText} />
           <Text className="mt-1 h-4 text-[12px] text-positive">{justAdded ?? ""}</Text>
         </View>
 
@@ -286,10 +287,7 @@ export default function QuickAddScreen() {
 
         <View className="flex-1" />
 
-        <Keypad
-          onDigit={(d) => setDigits((cur) => (cur.length >= 9 ? cur : cur + d))}
-          onBackspace={() => setDigits((cur) => cur.slice(0, -1))}
-        />
+        <Keypad value={amountText} onChange={setAmountText} />
 
         <Pressable
           onPress={confirm}

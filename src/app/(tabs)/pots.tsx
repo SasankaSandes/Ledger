@@ -11,6 +11,7 @@ import {
   categoryFromRow,
   fixedExpenseDefFromRow,
   fmt,
+  fmtExact,
   potFromRow,
   potSpent,
   transactionFromRow,
@@ -132,7 +133,7 @@ export default function PotsScreen() {
                       <Text className="text-[13px] text-text2">{f.name}</Text>
                       <Text className="text-[10.5px] text-muted2">{category?.name ?? "—"}</Text>
                     </View>
-                    <Text className="font-mono text-[12.5px] text-text">{fmt(f.amount)}</Text>
+                    <Text className="font-mono text-[12.5px] text-text">{fmtExact(f.amount)}</Text>
                   </View>
                 );
               })}

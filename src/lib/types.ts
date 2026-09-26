@@ -1,3 +1,5 @@
+import { round2 } from "./amount";
+
 // A user-defined organizing/filtering tag for money movement — Cash In or
 // Cash Out. Pure tag, no limit: budgeting lives on Pot, a separate entity
 // (see below). A category has no structural link to any Pot.
@@ -142,12 +144,31 @@ export function todayKey() {
   return dateToKey(new Date());
 }
 
+// Whole rupees, for aggregates (balances, totals, limits). Rounds for display
+// only — the underlying number keeps its cents. Use fmtExact for a single
+// record's amount. A tiny negative would otherwise print as "Rs -0".
 export function fmt(n: number | undefined) {
-  return "Rs " + Number(n || 0).toLocaleString("en-LK", { maximumFractionDigits: 0 });
+  const text = Number(n || 0).toLocaleString("en-LK", { maximumFractionDigits: 0 });
+  return "Rs " + (text === "-0" ? "0" : text);
 }
 
+// Always two decimals, no currency prefix — for a single transaction's amount
+// (Activity rows).
+export function amountText(n: number | undefined) {
+  return round2(Number(n || 0)).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Always two decimals with the "Rs" prefix — for amounts that are a single
+// record, or that you'll be matching to the cent (a fixed expense, what's
+// owed on one card when paying it).
+export function fmtExact(n: number | undefined) {
+  return "Rs " + amountText(n);
+}
+
+// Sums to whole cents, so float drift (0.1 + 0.2) can't leak into a total that
+// is then compared, displayed, or saved.
 export function sumItems(items: { amount: number }[]) {
-  return items.reduce((s, it) => s + Number(it.amount || 0), 0);
+  return round2(items.reduce((s, it) => s + Number(it.amount || 0), 0));
 }
 
 export function categorySpent(categoryId: string, transactions: Transaction[]): number {
@@ -162,7 +183,7 @@ export function potSpent(potId: string, transactions: Transaction[]): number {
 }
 
 export function potRemaining(pot: Pot, transactions: Transaction[]): number {
-  return Math.max(0, pot.spendLimit - potSpent(pot.id, transactions));
+  return Math.max(0, round2(pot.spendLimit - potSpent(pot.id, transactions)));
 }
 
 export function sumCashIn(transactions: Transaction[]): number {
@@ -184,7 +205,7 @@ export function sumCardSpend(transactions: Transaction[]): number {
 // The hero number: opening balance plus cash in, minus the cash that
 // actually left (cash spend + card bill payments).
 export function monthBalance(period: Period, transactions: Transaction[]): number {
-  return period.openingBalance + sumCashIn(transactions) - sumCashOut(transactions);
+  return round2(period.openingBalance + sumCashIn(transactions) - sumCashOut(transactions));
 }
 
 // Lifetime totals for one card, from the card_balances view: everything ever
@@ -194,7 +215,7 @@ export type CardBalance = { spent: number; paid: number };
 // What's owed on a card right now: what it started with, plus every charge,
 // minus every payment. Can go negative if overpaid.
 export function cardOwed(card: Card, balance: CardBalance | undefined): number {
-  return card.openingOwed + (balance?.spent ?? 0) - (balance?.paid ?? 0);
+  return round2(card.openingOwed + (balance?.spent ?? 0) - (balance?.paid ?? 0));
 }
 
 // Charged to a card within the given transactions (normally one period) —

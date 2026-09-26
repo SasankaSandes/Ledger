@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase/client";
 import { ensureOpenPeriod, listMonths } from "@/lib/period";
 import { confirmFixedExpense, unconfirmFixedExpense } from "@/lib/fixedExpenses";
 import { loadCardBalances, loadCards } from "@/lib/cards";
+import { round2 } from "@/lib/amount";
 import {
   FIXED_EXPENSE_COLUMNS,
   TRANSACTION_COLUMNS,
@@ -123,7 +124,7 @@ export default function HomeScreen() {
   const cashInTotal = sumCashIn(transactions);
   const cashOutTotal = sumCashOut(transactions);
   const balance = monthBalance(viewedPeriod, transactions);
-  const cardsOwedTotal = cards.reduce((s, c) => s + cardOwed(c, cardBalances[c.id]), 0);
+  const cardsOwedTotal = round2(cards.reduce((s, c) => s + cardOwed(c, cardBalances[c.id]), 0));
   const potAllocation = pots.reduce((s, p) => s + p.spendLimit, 0);
   const fixedExpensesTotal = sumItems(fixedExpenses);
 

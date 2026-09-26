@@ -3,6 +3,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { Keypad } from "@/components/quickadd/Keypad";
+import { AmountDisplay } from "@/components/quickadd/AmountDisplay";
 import { CategoryChipRow } from "@/components/quickadd/CategoryChipRow";
 import { PotChipRow } from "@/components/quickadd/PotChipRow";
 import { PayModeField, type PayMode } from "@/components/quickadd/PayModeField";
@@ -11,12 +12,12 @@ import { useHousehold } from "@/lib/household/HouseholdProvider";
 import { supabase } from "@/lib/supabase/client";
 import { confirmAction } from "@/lib/confirm";
 import { loadCards } from "@/lib/cards";
+import { parseAmount } from "@/lib/amount";
 import {
   CARD_COLUMNS,
   TRANSACTION_COLUMNS,
   cardFromRow,
   categoryFromRow,
-  fmt,
   potFromRow,
   todayKey,
   transactionFromRow,
@@ -47,7 +48,7 @@ export default function EditTransactionScreen() {
   const [cards, setCards] = useState<Card[]>([]);
 
   const [type, setType] = useState<TransactionType>("out");
-  const [digits, setDigits] = useState("");
+  const [amountText, setAmountText] = useState("");
   const [desc, setDesc] = useState("");
   const [date, setDate] = useState(todayKey());
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -107,7 +108,7 @@ export default function EditTransactionScreen() {
       setPots(potList);
       setCards(cardsList);
       setType(txn.type);
-      setDigits(String(txn.amount));
+      setAmountText(String(txn.amount));
       setDesc(txn.desc);
       setDate(txn.date);
       setSelectedCategoryId(txn.categoryId);
@@ -120,7 +121,7 @@ export default function EditTransactionScreen() {
 
   const categoriesForType = categories.filter((c) => c.type === type);
   const selectedCategory = categoriesForType.find((c) => c.id === selectedCategoryId) ?? null;
-  const amount = Number(digits || "0");
+  const amount = parseAmount(amountText);
   const isPayment = type === "card_payment";
   const chargedCard = type === "out" && payMode === "credit" ? (cards.find((c) => c.id === selectedCardId) ?? null) : null;
   const paidCard = isPayment ? (cards.find((c) => c.id === selectedCardId) ?? null) : null;
@@ -230,7 +231,7 @@ export default function EditTransactionScreen() {
         {error && <Text className="mt-2 text-[12px] text-negative">{error}</Text>}
 
         <View className="mt-6 items-center">
-          <Text className="font-mono text-[38px] text-text">{fmt(amount)}</Text>
+          <AmountDisplay text={amountText} />
         </View>
 
         <TextInput
@@ -303,10 +304,7 @@ export default function EditTransactionScreen() {
 
         <View className="flex-1" />
 
-        <Keypad
-          onDigit={(d) => setDigits((cur) => (cur.length >= 9 ? cur : cur + d))}
-          onBackspace={() => setDigits((cur) => cur.slice(0, -1))}
-        />
+        <Keypad value={amountText} onChange={setAmountText} />
 
         <Pressable
           onPress={save}

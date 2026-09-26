@@ -122,6 +122,7 @@ export function FixedExpenseEditor({
             />
             <AmountInput
               value={it.amount}
+              decimals={2}
               onChange={(n) => setAmount(it.id, n ?? 0)}
               className="w-[92px] rounded-lg border border-line/10 bg-input px-2.5 py-[7px] text-right font-mono text-[12.5px] text-text"
             />
