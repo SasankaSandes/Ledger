@@ -7,7 +7,9 @@ import { CoachStrip } from "@/components/home/CoachStrip";
 import { PotCard } from "@/components/home/PotCard";
 import { FixedExpensesSection } from "@/components/home/FixedExpensesSection";
 import { CardsSection } from "@/components/home/CardsSection";
+import { MonthSwitcher } from "@/components/ui/MonthSwitcher";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
+import { useViewedMonth } from "@/lib/month/SelectedMonthProvider";
 import { supabase } from "@/lib/supabase/client";
 import { ensureOpenPeriod, listMonths } from "@/lib/period";
 import { confirmFixedExpense, unconfirmFixedExpense } from "@/lib/fixedExpenses";
@@ -40,7 +42,6 @@ import {
 export default function HomeScreen() {
   const { householdId } = useHousehold();
   const [periods, setPeriods] = useState<Period[]>([]);
-  const [viewedIndex, setViewedIndex] = useState(0);
   const [pots, setPots] = useState<Pot[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [cardBalances, setCardBalances] = useState<Record<string, CardBalance>>({});
@@ -49,8 +50,8 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [coachDismissed, setCoachDismissed] = useState(false);
 
-  const viewedPeriod = periods[viewedIndex] ?? null;
-  const isOpen = viewedIndex === 0;
+  // The selected month is shared with Activity, so both tabs stay on the same one.
+  const { viewedPeriod, isOpen, canGoOlder, canGoNewer, goOlder, goNewer } = useViewedMonth(periods);
 
   const loadTransactions = useCallback(async (periodId: string) => {
     const { data } = await supabase
@@ -161,27 +162,13 @@ export default function HomeScreen() {
       <View className="px-4 pb-10 pt-3">
         <View className="flex-row items-baseline justify-between">
           <Text className="font-display text-[22px] text-gold">Ledger</Text>
-          <View className="flex-row items-center gap-3">
-            <Pressable
-              onPress={() => setViewedIndex((i) => Math.min(periods.length - 1, i + 1))}
-              disabled={viewedIndex >= periods.length - 1}
-              hitSlop={8}
-              style={{ opacity: viewedIndex >= periods.length - 1 ? 0.3 : 1 }}
-            >
-              <Text className="text-[13px] text-muted">‹</Text>
-            </Pressable>
-            <Text className="font-mono text-[11px] uppercase tracking-wider text-muted">
-              {monthKeyToLabel(viewedPeriod.monthKey)}
-            </Text>
-            <Pressable
-              onPress={() => setViewedIndex((i) => Math.max(0, i - 1))}
-              disabled={isOpen}
-              hitSlop={8}
-              style={{ opacity: isOpen ? 0.3 : 1 }}
-            >
-              <Text className="text-[13px] text-muted">›</Text>
-            </Pressable>
-          </View>
+          <MonthSwitcher
+            label={monthKeyToLabel(viewedPeriod.monthKey)}
+            canGoOlder={canGoOlder}
+            canGoNewer={canGoNewer}
+            onOlder={goOlder}
+            onNewer={goNewer}
+          />
         </View>
         <View className="mt-1 flex-row items-center justify-end gap-3">
           {!isOpen && <Text className="text-[10.5px] text-muted2">Viewing a past month — read only</Text>}

@@ -2,18 +2,22 @@ import { useCallback, useEffect, useState } from "react";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { ActionSheet } from "@/components/ui/ActionSheet";
+import { MonthSwitcher } from "@/components/ui/MonthSwitcher";
 import { Screen } from "@/components/ui/Screen";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
+import { useViewedMonth } from "@/lib/month/SelectedMonthProvider";
 import { supabase } from "@/lib/supabase/client";
 import { confirmAction } from "@/lib/confirm";
 import { loadCardBalances, loadCards } from "@/lib/cards";
+import { ensureOpenPeriod, listMonths } from "@/lib/period";
 import {
   TRANSACTION_COLUMNS,
   amountText,
   cardOwed,
   categoryFromRow,
   fmt,
+  monthKeyToLabel,
   potFromRow,
   shortDate,
   sumCashIn,
@@ -22,6 +26,7 @@ import {
   type Card,
   type CardBalance,
   type Category,
+  type Period,
   type Pot,
   type Transaction,
 } from "@/lib/types";
@@ -37,7 +42,9 @@ type PayFilter = "all" | "cash" | "credit";
 // to give. Category, Pot and Card chips elsewhere in the app can deep link
 // here pre-filtered via ?category=<id> / ?pot=<id> / ?card=<id>. The "Cash
 // Out" tab covers all spending (cash or card) plus card bill payments; a card
-// payment shows in the ledger as its own row.
+// payment shows in the ledger as its own row. Everything here — the list and
+// its totals — is scoped to the month selected in the ‹ › switcher, which is
+// shared with Home (see SelectedMonthProvider).
 export default function ActivityScreen() {
   const { householdId, nicknames, memberCount } = useHousehold();
   const { session } = useAuth();
@@ -47,7 +54,12 @@ export default function ActivityScreen() {
   const [pots, setPots] = useState<Pot[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [cardBalances, setCardBalances] = useState<Record<string, CardBalance>>({});
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [periods, setPeriods] = useState<Period[]>([]);
+  const { viewedPeriod, canGoOlder, canGoNewer, goOlder, goNewer } = useViewedMonth(periods);
+  // Tagged with the period it was fetched for, so a month that's still
+  // loading never shows the previous month's rows under its own label.
+  const [loaded, setLoaded] = useState<{ periodId: string; items: Transaction[] } | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [potFilter, setPotFilter] = useState<string | null>(null);
   const [payFilter, setPayFilter] = useState<PayFilter>("all");
@@ -64,7 +76,9 @@ export default function ActivityScreen() {
 
   const load = useCallback(async () => {
     if (!householdId) return;
-    const [{ data: catData }, { data: potData }, { data: txnData }, cardList, balances] = await Promise.all([
+    await ensureOpenPeriod(supabase, householdId);
+    const [allPeriods, { data: catData }, { data: potData }, cardList, balances] = await Promise.all([
+      listMonths(supabase, householdId),
       supabase
         .from("categories")
         .select("id, household_id, name, type, archived_at")
@@ -75,21 +89,15 @@ export default function ActivityScreen() {
         .select("id, household_id, name, spend_limit, archived_at")
         .eq("household_id", householdId)
         .order("created_at", { ascending: true }),
-      supabase
-        .from("transactions")
-        .select(TRANSACTION_COLUMNS)
-        .eq("household_id", householdId)
-        .order("date", { ascending: false })
-        .limit(300),
       // Archived cards too — old transactions still need their card's name.
       loadCards(supabase, householdId, { includeArchived: true }),
       loadCardBalances(supabase, householdId),
     ]);
+    setPeriods(allPeriods);
     setCategories((catData ?? []).map(categoryFromRow));
     setPots((potData ?? []).map(potFromRow));
     setCards(cardList);
     setCardBalances(balances);
-    setTransactions((txnData ?? []).map(transactionFromRow));
     setLoading(false);
   }, [householdId]);
 
@@ -97,9 +105,31 @@ export default function ActivityScreen() {
     load();
   }, [load]);
 
+  // A transaction belongs to a month by its period_id, not its date (editing
+  // the date never moves it between months), so that's what scopes the list.
+  // Refetches whenever the selected month changes — including when Home
+  // changes it — and on each focus, below.
+  const viewedPeriodId = viewedPeriod?.id ?? null;
+  useEffect(() => {
+    if (!viewedPeriodId) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("transactions")
+        .select(TRANSACTION_COLUMNS)
+        .eq("period_id", viewedPeriodId)
+        .order("date", { ascending: false });
+      if (!cancelled) setLoaded({ periodId: viewedPeriodId, items: (data ?? []).map(transactionFromRow) });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [viewedPeriodId, refreshTick]);
+
   useFocusEffect(
     useCallback(() => {
       load();
+      setRefreshTick((t) => t + 1);
     }, [load])
   );
 
@@ -112,6 +142,9 @@ export default function ActivityScreen() {
       </Screen>
     );
   }
+
+  const monthLoading = !!viewedPeriod && loaded?.periodId !== viewedPeriod.id;
+  const transactions = !monthLoading && loaded ? loaded.items : [];
 
   const categoryById = new Map(categories.map((c) => [c.id, c]));
   const potById = new Map(pots.map((p) => [p.id, p]));
@@ -156,7 +189,7 @@ export default function ActivityScreen() {
   const remove = async (id: string) => {
     const removed = transactions.find((t) => t.id === id);
     await supabase.from("transactions").delete().eq("id", id);
-    setTransactions((cur) => cur.filter((t) => t.id !== id));
+    setLoaded((cur) => cur && { ...cur, items: cur.items.filter((t) => t.id !== id) });
     // Removing a card charge or payment changes what's owed on that card.
     if (removed?.cardId && householdId) setCardBalances(await loadCardBalances(supabase, householdId));
   };
@@ -176,7 +209,18 @@ export default function ActivityScreen() {
   return (
     <Screen>
       <View className="px-4 pb-10 pt-3">
-        <Text className="font-display text-[22px] text-text">Activity</Text>
+        <View className="flex-row items-baseline justify-between">
+          <Text className="font-display text-[22px] text-text">Activity</Text>
+          {viewedPeriod && (
+            <MonthSwitcher
+              label={monthKeyToLabel(viewedPeriod.monthKey)}
+              canGoOlder={canGoOlder}
+              canGoNewer={canGoNewer}
+              onOlder={goOlder}
+              onNewer={goNewer}
+            />
+          )}
+        </View>
 
         <View className="mt-3 flex-row gap-1 rounded-[11px] border border-line/10 bg-card p-1">
           {(["all", "in", "out"] as TypeFilter[]).map((t) => (
@@ -291,7 +335,7 @@ export default function ActivityScreen() {
           <View>
             <Text className="text-[10.5px] uppercase tracking-wider text-muted">{heading}</Text>
             <Text className="mt-0.5 text-[11px] text-muted2">
-              {filtered.length} transactions
+              {monthLoading ? "Loading…" : `${filtered.length} transactions`}
               {activeCard ? ` · owed ${fmt(cardOwed(activeCard, cardBalances[activeCard.id]))}` : ""}
             </Text>
           </View>
@@ -303,7 +347,9 @@ export default function ActivityScreen() {
         </View>
 
         <View className="mt-4 gap-1.5">
-          {filtered.length === 0 && <Text className="text-[12.5px] text-muted2">Nothing here yet.</Text>}
+          {filtered.length === 0 && (
+            <Text className="text-[12.5px] text-muted2">{monthLoading ? "Loading…" : "Nothing here yet."}</Text>
+          )}
           {filtered.map((t) => {
             const cat = t.categoryId ? categoryById.get(t.categoryId) : null;
             const pot = t.potId ? potById.get(t.potId) : null;

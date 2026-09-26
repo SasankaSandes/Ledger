@@ -3,6 +3,7 @@ import { router, Tabs } from "expo-router";
 import { useColorScheme } from "nativewind";
 import { darkTokens, lightTokens, tabBarStyle } from "@/lib/theme/tokens";
 import { ActivityIcon, HomeIcon, PotsIcon, SettingsIcon } from "@/components/ui/TabBarIcons";
+import { SelectedMonthProvider } from "@/lib/month/SelectedMonthProvider";
 
 function TabLabel({ label, focused }: { label: string; focused: boolean }) {
   return (
@@ -42,45 +43,47 @@ export default function TabsLayout() {
   const tokens = colorScheme === "dark" ? darkTokens : lightTokens;
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: tabBarStyle(colorScheme),
-        tabBarShowLabel: true,
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          tabBarLabel: ({ focused }) => <TabLabel label="Home" focused={focused} />,
-          tabBarIcon: ({ focused }) => <HomeIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
+    <SelectedMonthProvider>
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarStyle: tabBarStyle(colorScheme),
+          tabBarShowLabel: true,
         }}
-      />
-      <Tabs.Screen
-        name="pots"
-        options={{
-          tabBarLabel: ({ focused }) => <TabLabel label="Pots" focused={focused} />,
-          tabBarIcon: ({ focused }) => <PotsIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
-        }}
-      />
-      <Tabs.Screen
-        name="add"
-        options={{ tabBarButton: (props) => <QuickAddButton {...props} /> }}
-      />
-      <Tabs.Screen
-        name="activity"
-        options={{
-          tabBarLabel: ({ focused }) => <TabLabel label="Activity" focused={focused} />,
-          tabBarIcon: ({ focused }) => <ActivityIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          tabBarLabel: ({ focused }) => <TabLabel label="Settings" focused={focused} />,
-          tabBarIcon: ({ focused }) => <SettingsIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
-        }}
-      />
-    </Tabs>
+      >
+        <Tabs.Screen
+          name="index"
+          options={{
+            tabBarLabel: ({ focused }) => <TabLabel label="Home" focused={focused} />,
+            tabBarIcon: ({ focused }) => <HomeIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
+          }}
+        />
+        <Tabs.Screen
+          name="pots"
+          options={{
+            tabBarLabel: ({ focused }) => <TabLabel label="Pots" focused={focused} />,
+            tabBarIcon: ({ focused }) => <PotsIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
+          }}
+        />
+        <Tabs.Screen
+          name="add"
+          options={{ tabBarButton: (props) => <QuickAddButton {...props} /> }}
+        />
+        <Tabs.Screen
+          name="activity"
+          options={{
+            tabBarLabel: ({ focused }) => <TabLabel label="Activity" focused={focused} />,
+            tabBarIcon: ({ focused }) => <ActivityIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
+          }}
+        />
+        <Tabs.Screen
+          name="settings"
+          options={{
+            tabBarLabel: ({ focused }) => <TabLabel label="Settings" focused={focused} />,
+            tabBarIcon: ({ focused }) => <SettingsIcon color={focused ? tokens.gold : tokens.muted} size={22} />,
+          }}
+        />
+      </Tabs>
+    </SelectedMonthProvider>
   );
 }
