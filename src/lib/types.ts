@@ -144,6 +144,14 @@ export function todayKey() {
   return dateToKey(new Date());
 }
 
+// Calendar-day arithmetic via setDate rather than subtracting 24h, so a DST
+// changeover can't land on the wrong day.
+export function yesterdayKey() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return dateToKey(d);
+}
+
 // Whole rupees, for aggregates (balances, totals, limits). Rounds for display
 // only — the underlying number keeps its cents. Use fmtExact for a single
 // record's amount. A tiny negative would otherwise print as "Rs -0".
@@ -358,29 +366,36 @@ export function periodFromRow(row: {
   };
 }
 
-// A learned keyword -> category mapping, reinforced on every confirm (see
-// src/lib/merchantRouting.ts). Not validated against the current category
-// list here — inferCategory() does that filtering at read time, since a
-// category can be archived after a mapping to it was learned.
-export type MerchantMapEntry = {
+// A learned keyword -> category (+ pot) mapping, reinforced on every confirm
+// (see src/lib/keywordRouting.ts). potId is null for "no pot" — a real,
+// learned answer — and always null for Cash In. Not validated against the
+// current category/pot lists here — inferCategory()/inferPot() do that
+// filtering at read time, since either can be archived after a mapping to it
+// was learned.
+export type KeywordMapEntry = {
   id: string;
   keyword: string;
   categoryId: string;
+  potId: string | null;
   type: "in" | "out";
   hitCount: number;
 };
 
-export function merchantMapEntryFromRow(row: {
+export const KEYWORD_MAP_COLUMNS = "id, keyword, category_id, pot_id, type, hit_count";
+
+export function keywordMapEntryFromRow(row: {
   id: string;
   keyword: string;
   category_id: string;
+  pot_id: string | null;
   type: "in" | "out";
   hit_count: number;
-}): MerchantMapEntry {
+}): KeywordMapEntry {
   return {
     id: row.id,
     keyword: row.keyword,
     categoryId: row.category_id,
+    potId: row.pot_id,
     type: row.type,
     hitCount: row.hit_count,
   };
