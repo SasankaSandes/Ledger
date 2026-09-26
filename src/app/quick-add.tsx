@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { router } from "expo-router";
-import { Keyboard, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from "react-native";
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Screen } from "@/components/ui/Screen";
 import { Keypad } from "@/components/quickadd/Keypad";
@@ -10,7 +19,7 @@ import { DetailPill } from "@/components/quickadd/DetailPill";
 import { NoteSuggestions } from "@/components/quickadd/NoteSuggestions";
 import { ChoiceSheet, DateSheet } from "@/components/quickadd/QuickAddSheets";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
-import { useKeyboardInset } from "@/lib/useKeyboardInset";
+import { useKeyboard } from "@/lib/useKeyboard";
 import { supabase } from "@/lib/supabase/client";
 import { ensureOpenPeriod } from "@/lib/period";
 import { loadCards } from "@/lib/cards";
@@ -49,6 +58,8 @@ type Nudge = "amount" | "category" | "card";
 
 const NONE_POT = "none";
 const CASH = "cash";
+// Gap left above the note field when it's scrolled to the top of the screen.
+const NOTE_TOP_MARGIN = 6;
 
 // Presented as a modal (see src/app/_layout.tsx) from the center tab-bar
 // "+" button. Owns its own period/category/pot/card/keyword-map load — a
@@ -64,10 +75,11 @@ const CASH = "cash";
 // amount", then "Note ›" (jumps to the note), then "Pick a category", then
 // "Add Rs … · Category". Typing the note suggests a category and (Cash Out) a
 // pot — from the household's keyword map, or exactly from a previous identical
-// note — and lists matching previous notes to tap; suggestions are marked ✦ and
-// yield to anything the user taps. While the note has focus the keypad steps
-// aside for the keyboard and the button rides above it; tapping the amount
-// brings the keypad back.
+// note — and drops matching previous notes down from the field to tap;
+// suggestions are marked ✦ and yield to anything the user taps. While the note
+// has focus the keypad steps aside for the keyboard, the upper part of the screen
+// scrolls so the note field is at the top, and the button rides above the
+// keyboard; tapping the amount brings the keypad back.
 export default function QuickAddScreen() {
   const { householdId } = useHousehold();
   const [period, setPeriod] = useState<Period | null>(null);
@@ -91,6 +103,10 @@ export default function QuickAddScreen() {
   const [payMode, setPayMode] = useState<PayMode>("cash");
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [noteFocused, setNoteFocused] = useState(false);
+  // Geometry for scrolling the note field to the top while typing: the note
+  // wrapper's y inside the scroll content, and the scroll viewport's height.
+  const [noteY, setNoteY] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
   const [sheet, setSheet] = useState<SheetKind | null>(null);
   const [nudge, setNudge] = useState<Nudge | null>(null);
   const [saving, setSaving] = useState(false);
@@ -98,13 +114,25 @@ export default function QuickAddScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const noteRef = useRef<TextInput>(null);
+  const scrollRef = useRef<ScrollView>(null);
   const nudgeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const insets = useSafeAreaInsets();
-  // Web only (0 elsewhere): how much of the page's bottom the keyboard covers.
-  const keyboardInset = useKeyboardInset();
+  // inset (web only): how much of the page's bottom the keyboard covers.
+  // visible: whether a keyboard is up, on any platform.
+  const { inset: keyboardInset, visible: keyboardVisible } = useKeyboard();
+
+  // While the note is being typed with the keyboard up, the upper part of the
+  // screen scrolls so the note field sits at the very top of what's visible,
+  // leaving the room below it for the suggestion dropdown, categories and pills.
+  // Scrolling back to the top when typing ends restores the full layout.
+  const noteAtTop = noteFocused && keyboardVisible;
+  const noteScrollY = Math.max(0, noteY - NOTE_TOP_MARGIN);
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ y: noteAtTop ? noteScrollY : 0, animated: true });
+  }, [noteAtTop, noteScrollY, viewportH]);
 
   useEffect(
     () => () => {
@@ -430,7 +458,9 @@ export default function QuickAddScreen() {
           ? "Pot suggested from note"
           : null;
 
-  const noteSuggestions = suggestNotes(desc, history.notes, categories, pots, mode);
+  // The dropdown lives only while the note has focus. (`noteFocused` lags a blur
+  // by a beat — see onNoteBlur — so tapping a row still lands before it closes.)
+  const noteSuggestions = noteFocused ? suggestNotes(desc, history.notes, categories, pots, mode) : [];
 
   const dateLabel = date === todayKey() ? "Today" : date === yesterdayKey() ? "Yesterday" : shortDate(date);
   const payLabel = chargedCard ? chargedCard.name : payMode === "credit" ? "Choose card" : "Cash";
@@ -443,123 +473,147 @@ export default function QuickAddScreen() {
               shrink the content by what it covers (less the bottom safe area,
               which the keyboard already hides) to lift the Add button above it. */}
           <View
-            className="flex-1 px-4 pb-4 pt-3"
+            className="flex-1 pb-4 pt-3"
             style={{ marginBottom: Math.max(0, keyboardInset - insets.bottom) }}
           >
-            <View className="h-9 flex-row items-center">
-              <View className="w-8" />
-              <View className="flex-1 items-center">
-                <View className="flex-row gap-1 rounded-[11px] border border-line/10 bg-card p-1">
-                  {(["out", "in"] as Mode[]).map((m) => (
-                    <Pressable
-                      key={m}
-                      onPress={() => switchMode(m)}
-                      className={`items-center rounded-lg px-3.5 py-1.5 ${mode === m ? "bg-fill" : ""}`}
-                    >
-                      <Text className={`text-[12.5px] font-body-medium ${mode === m ? "text-text" : "text-muted"}`}>
-                        {m === "out" ? "Cash Out" : "Cash In"}
-                      </Text>
-                    </Pressable>
-                  ))}
+            {/* Everything above the keypad scrolls, so that with the keyboard up the
+                note field can be brought to the top. minHeight guarantees there's
+                enough scroll room to get it there even when the content is short. */}
+            <ScrollView
+              ref={scrollRef}
+              className="flex-1"
+              onLayout={(e) => setViewportH(e.nativeEvent.layout.height)}
+              onContentSizeChange={() => {
+                if (noteAtTop) scrollRef.current?.scrollTo({ y: noteScrollY, animated: false });
+              }}
+              contentContainerStyle={{
+                paddingHorizontal: 16,
+                minHeight: noteAtTop ? noteScrollY + viewportH : undefined,
+              }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+            >
+              <View className="h-9 flex-row items-center">
+                <View className="w-8" />
+                <View className="flex-1 items-center">
+                  <View className="flex-row gap-1 rounded-[11px] border border-line/10 bg-card p-1">
+                    {(["out", "in"] as Mode[]).map((m) => (
+                      <Pressable
+                        key={m}
+                        onPress={() => switchMode(m)}
+                        className={`items-center rounded-lg px-3.5 py-1.5 ${mode === m ? "bg-fill" : ""}`}
+                      >
+                        <Text className={`text-[12.5px] font-body-medium ${mode === m ? "text-text" : "text-muted"}`}>
+                          {m === "out" ? "Cash Out" : "Cash In"}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
                 </View>
+                <Pressable onPress={() => router.back()} hitSlop={8} accessibilityLabel="Close" className="w-8 items-end">
+                  <Text className="text-[20px] leading-none text-muted2">×</Text>
+                </Pressable>
               </View>
-              <Pressable onPress={() => router.back()} hitSlop={8} accessibilityLabel="Close" className="w-8 items-end">
-                <Text className="text-[20px] leading-none text-muted2">×</Text>
-              </Pressable>
-            </View>
 
-            {error && <Text className="mt-2 text-[12px] text-negative">{error}</Text>}
+              {error && <Text className="mt-2 text-[12px] text-negative">{error}</Text>}
 
-            <Pressable
-              onPress={leaveNote}
-              accessibilityLabel="Amount"
-              className={`mt-3 items-center rounded-xl border py-2 ${
-                nudge === "amount" ? "border-negative/70" : "border-transparent"
-              }`}
-            >
-              <AmountDisplay text={amountText} />
-              <Text className={`mt-0.5 h-[18px] text-[12px] ${justAdded ? "text-positive" : "text-muted"}`}>
-                {justAdded ?? (mode === "out" ? "Spent" : "Received")}
-              </Text>
-            </Pressable>
-
-            <TextInput
-              ref={noteRef}
-              value={desc}
-              onChangeText={onChangeDesc}
-              onFocus={onNoteFocus}
-              onBlur={onNoteBlur}
-              onSubmitEditing={leaveNote}
-              returnKeyType="done"
-              autoCapitalize="none"
-              placeholder={mode === "out" ? "What was it? lunch, keells, uber…" : "Where from? salary, freelance, gift…"}
-              placeholderTextColor="#5C6070"
-              className="mt-2 h-[42px] rounded-xl border border-line/10 bg-input px-3 text-[14px] text-text"
-            />
-
-            <View className="mb-1.5 mt-3.5 flex-row items-center justify-between">
-              <Text className="text-[12px] text-muted">Category</Text>
-              {suggestionNote && <Text className="text-[12px] text-gold">✦ {suggestionNote}</Text>}
-            </View>
-            <View
-              className={`-mx-1 rounded-xl border px-1 py-1 ${
-                nudge === "category" ? "border-negative/70" : "border-transparent"
-              }`}
-            >
-              <QuickCategoryRow
-                categories={categoriesForMode}
-                selectedId={selectedCategoryId}
-                suggested={categorySuggested}
-                onSelect={selectCategory}
-                onCreate={createCategory}
-              />
-            </View>
-
-            <View className="mt-3 flex-row gap-1.5">
-              <DetailPill label={dateLabel} active={date !== todayKey()} onPress={() => openSheet("date")} />
-              {mode === "out" && (
-                <>
-                  <DetailPill
-                    label={selectedPot?.name ?? "No pot"}
-                    active={!!selectedPot}
-                    suggested={potSuggested}
-                    onPress={() => openSheet("pot")}
-                  />
-                  <DetailPill
-                    label={payLabel}
-                    active={payMode === "credit"}
-                    invalid={nudge === "card"}
-                    onPress={() => openSheet("pay")}
-                  />
-                </>
-              )}
-            </View>
-
-            {/* The free space between the pills and the keypad/Add button: holds the
-                matching previous notes while typing, so they sit over the keyboard. */}
-            {noteSuggestions.length > 0 ? (
-              <NoteSuggestions items={noteSuggestions} onPick={pickNote} />
-            ) : (
-              <View className="flex-1" />
-            )}
-
-            {!noteFocused && <Keypad value={amountText} onChange={setAmountText} compact />}
-
-            <Pressable
-              onPress={onPressAdd}
-              disabled={saving}
-              accessibilityRole="button"
-              className={`mt-3 items-center rounded-xl py-3.5 ${ready ? "bg-gold" : "bg-fill"}`}
-              style={{ opacity: saving ? 0.7 : 1 }}
-            >
-              <Text
-                className={`font-body-semibold text-[13.5px] ${
-                  ready ? "text-on-gold" : goesToNote ? "text-gold" : "text-muted"
+              <Pressable
+                onPress={leaveNote}
+                accessibilityLabel="Amount"
+                className={`mt-3 items-center rounded-xl border py-2 ${
+                  nudge === "amount" ? "border-negative/70" : "border-transparent"
                 }`}
               >
-                {saving ? "Adding…" : ctaLabel}
-              </Text>
-            </Pressable>
+                <AmountDisplay text={amountText} />
+                <Text className={`mt-0.5 h-[18px] text-[12px] ${justAdded ? "text-positive" : "text-muted"}`}>
+                  {justAdded ?? (mode === "out" ? "Spent" : "Received")}
+                </Text>
+              </Pressable>
+
+              {/* The note field and its suggestion dropdown. zIndex lifts the dropdown
+                  over the category row that follows; onLayout reports where to
+                  scroll to when the note is brought to the top. */}
+              <View
+                className="mt-2"
+                style={{ zIndex: 20 }}
+                onLayout={(e) => setNoteY(e.nativeEvent.layout.y)}
+              >
+                <TextInput
+                  ref={noteRef}
+                  value={desc}
+                  onChangeText={onChangeDesc}
+                  onFocus={onNoteFocus}
+                  onBlur={onNoteBlur}
+                  onSubmitEditing={leaveNote}
+                  returnKeyType="done"
+                  autoCapitalize="none"
+                  placeholder={mode === "out" ? "What was it? lunch, keells, uber…" : "Where from? salary, freelance, gift…"}
+                  placeholderTextColor="#5C6070"
+                  className="h-[42px] rounded-xl border border-line/10 bg-input px-3 text-[14px] text-text"
+                />
+                <NoteSuggestions items={noteSuggestions} onPick={pickNote} />
+              </View>
+
+              <View className="mb-1.5 mt-3.5 flex-row items-center justify-between">
+                <Text className="text-[12px] text-muted">Category</Text>
+                {suggestionNote && <Text className="text-[12px] text-gold">✦ {suggestionNote}</Text>}
+              </View>
+              <View
+                className={`-mx-1 rounded-xl border px-1 py-1 ${
+                  nudge === "category" ? "border-negative/70" : "border-transparent"
+                }`}
+              >
+                <QuickCategoryRow
+                  categories={categoriesForMode}
+                  selectedId={selectedCategoryId}
+                  suggested={categorySuggested}
+                  onSelect={selectCategory}
+                  onCreate={createCategory}
+                />
+              </View>
+
+              <View className="mt-3 flex-row gap-1.5">
+                <DetailPill label={dateLabel} active={date !== todayKey()} onPress={() => openSheet("date")} />
+                {mode === "out" && (
+                  <>
+                    <DetailPill
+                      label={selectedPot?.name ?? "No pot"}
+                      active={!!selectedPot}
+                      suggested={potSuggested}
+                      onPress={() => openSheet("pot")}
+                    />
+                    <DetailPill
+                      label={payLabel}
+                      active={payMode === "credit"}
+                      invalid={nudge === "card"}
+                      onPress={() => openSheet("pay")}
+                    />
+                  </>
+                )}
+              </View>
+
+            </ScrollView>
+
+            <View className="px-4">
+              {!noteFocused && <Keypad value={amountText} onChange={setAmountText} compact />}
+
+              <Pressable
+                onPress={onPressAdd}
+                disabled={saving}
+                accessibilityRole="button"
+                className={`mt-3 items-center rounded-xl py-3.5 ${ready ? "bg-gold" : "bg-fill"}`}
+                style={{ opacity: saving ? 0.7 : 1 }}
+              >
+                <Text
+                  className={`font-body-semibold text-[13.5px] ${
+                    ready ? "text-on-gold" : goesToNote ? "text-gold" : "text-muted"
+                  }`}
+                >
+                  {saving ? "Adding…" : ctaLabel}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </KeyboardAvoidingView>
       </Screen>
