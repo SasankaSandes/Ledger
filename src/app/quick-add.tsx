@@ -1,19 +1,31 @@
 import { useEffect, useRef, useState } from "react";
 import { router } from "expo-router";
 import { Keyboard, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Screen } from "@/components/ui/Screen";
 import { Keypad } from "@/components/quickadd/Keypad";
 import { AmountDisplay } from "@/components/quickadd/AmountDisplay";
 import { QuickCategoryRow } from "@/components/quickadd/QuickCategoryRow";
 import { DetailPill } from "@/components/quickadd/DetailPill";
+import { NoteSuggestions } from "@/components/quickadd/NoteSuggestions";
 import { ChoiceSheet, DateSheet } from "@/components/quickadd/QuickAddSheets";
 import { useHousehold } from "@/lib/household/HouseholdProvider";
+import { useKeyboardInset } from "@/lib/useKeyboardInset";
 import { supabase } from "@/lib/supabase/client";
 import { ensureOpenPeriod } from "@/lib/period";
 import { loadCards } from "@/lib/cards";
 import { parseAmount } from "@/lib/amount";
 import { inferCategory, inferPot, learnMapping, loadKeywordMap } from "@/lib/keywordRouting";
-import { NO_USAGE, loadUsageCounts, sortByUsage } from "@/lib/usage";
+import {
+  NO_HISTORY,
+  findNote,
+  loadHistory,
+  recordNote,
+  sortByUsage,
+  suggestNotes,
+  type History,
+  type NoteSuggestion,
+} from "@/lib/history";
 import {
   CARD_COLUMNS,
   cardFromRow,
@@ -48,12 +60,14 @@ const CASH = "cash";
 //
 // One screen, built around the amount: hero readout → note → category →
 // three pills (Date / Pot / Paid with, each opening a small sheet) → keypad →
-// an Add button that says what it will add, or what's missing. Typing the
-// note suggests a category and (Cash Out) a pot from the household's
-// keyword map; suggestions are marked ✦ and yield to anything the user taps.
-// The keypad's "Note" key jumps from the amount to the note; while the note
-// has focus the keypad steps aside for the keyboard, and tapping the amount
-// brings it back.
+// one button at the bottom that always says what happens next: "Enter an
+// amount", then "Note ›" (jumps to the note), then "Pick a category", then
+// "Add Rs … · Category". Typing the note suggests a category and (Cash Out) a
+// pot — from the household's keyword map, or exactly from a previous identical
+// note — and lists matching previous notes to tap; suggestions are marked ✦ and
+// yield to anything the user taps. While the note has focus the keypad steps
+// aside for the keyboard and the button rides above it; tapping the amount
+// brings the keypad back.
 export default function QuickAddScreen() {
   const { householdId } = useHousehold();
   const [period, setPeriod] = useState<Period | null>(null);
@@ -61,6 +75,7 @@ export default function QuickAddScreen() {
   const [pots, setPots] = useState<Pot[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [keywordMap, setKeywordMap] = useState<KeywordMapEntry[]>([]);
+  const [history, setHistory] = useState<History>(NO_HISTORY);
   const [loading, setLoading] = useState(true);
 
   const [mode, setMode] = useState<Mode>("out");
@@ -85,11 +100,17 @@ export default function QuickAddScreen() {
   const noteRef = useRef<TextInput>(null);
   const nudgeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const insets = useSafeAreaInsets();
+  // Web only (0 elsewhere): how much of the page's bottom the keyboard covers.
+  const keyboardInset = useKeyboardInset();
 
   useEffect(
     () => () => {
       clearTimeout(nudgeTimer.current);
       clearTimeout(toastTimer.current);
+      clearTimeout(blurTimer.current);
     },
     []
   );
@@ -97,7 +118,7 @@ export default function QuickAddScreen() {
   useEffect(() => {
     if (!householdId) return;
     (async () => {
-      const [openPeriod, { data: catData }, { data: potData }, cardList, keywords, usage] = await Promise.all([
+      const [openPeriod, { data: catData }, { data: potData }, cardList, keywords, loaded] = await Promise.all([
         ensureOpenPeriod(supabase, householdId),
         supabase
           .from("categories")
@@ -114,16 +135,18 @@ export default function QuickAddScreen() {
         loadCards(supabase, householdId),
         // Suggestions are a convenience — never let them block adding an entry.
         loadKeywordMap(supabase, householdId).catch((): KeywordMapEntry[] => []),
-        // Ordering is a convenience too — fall back to creation order.
-        loadUsageCounts(supabase, householdId).catch(() => NO_USAGE),
+        // Ordering and note suggestions are conveniences too — fall back to
+        // creation order and no suggestions.
+        loadHistory(supabase, householdId).catch(() => NO_HISTORY),
       ]);
       setPeriod(openPeriod);
       // Ranked once, on open, and left alone while the screen stays open, so
       // chips don't shuffle under the thumb after each Add.
-      setCategories(sortByUsage((catData ?? []).map(categoryFromRow), usage.categories));
-      setPots(sortByUsage((potData ?? []).map(potFromRow), usage.pots));
+      setCategories(sortByUsage((catData ?? []).map(categoryFromRow), loaded.categories));
+      setPots(sortByUsage((potData ?? []).map(potFromRow), loaded.pots));
       setCards(cardList);
       setKeywordMap(keywords);
+      setHistory(loaded);
       setLoading(false);
     })();
   }, [householdId]);
@@ -132,10 +155,16 @@ export default function QuickAddScreen() {
   const selectedCategory = categoriesForMode.find((c) => c.id === selectedCategoryId) ?? null;
   const selectedPot = mode === "out" ? (pots.find((p) => p.id === selectedPotId) ?? null) : null;
 
-  const guessFor = (text: string, m: Mode) => ({
-    category: inferCategory(text, categories, keywordMap, m),
-    pot: m === "out" ? inferPot(text, pots, keywordMap) : null,
-  });
+  // What to suggest for a typed note. An exact match with a previous note wins —
+  // it knows "uber eats" from "uber ride" — otherwise the first-word keyword map.
+  const guessFor = (text: string, m: Mode) => {
+    const exact = findNote(text, history.notes, categories, pots, m);
+    if (exact) return { category: exact.category, pot: m === "out" ? exact.pot : null };
+    return {
+      category: inferCategory(text, categories, keywordMap, m),
+      pot: m === "out" ? inferPot(text, pots, keywordMap) : null,
+    };
+  };
 
   // Runs on every keystroke in the note. A suggestion never overrides a value
   // the user chose themselves, and is withdrawn (not left behind) when the
@@ -173,6 +202,43 @@ export default function QuickAddScreen() {
     setSelectedPotId(id);
     setPotManuallySet(true);
     setPotSuggested(false);
+  };
+
+  // Tapping a previous note is an explicit accept: fill the note and take the
+  // category and pot it was filed under, marked ✦ like any note-derived
+  // suggestion (they still yield to anything tapped afterwards). The keyboard
+  // stays up so Add — which rides above it — is one tap away; browsers blur the
+  // field on the tap, so hand focus straight back.
+  const pickNote = (s: NoteSuggestion) => {
+    noteRef.current?.focus();
+    setDesc(s.text);
+    setSelectedCategoryId(s.category.id);
+    setCategoryManuallySet(false);
+    setCategorySuggested(true);
+    if (mode === "out") {
+      setSelectedPotId(s.pot?.id ?? null);
+      setPotManuallySet(false);
+      setPotSuggested(!!s.pot);
+    }
+  };
+
+  // The keypad steps aside while the note has focus. Browsers blur the field on
+  // the mouse-down of whatever is tapped next (a chip, the Add button); flipping
+  // the layout right then would move that target out from under the tap, so the
+  // blur is applied after a beat. Explicit exits (tapping the amount, Done/Enter,
+  // saving) leave immediately.
+  const onNoteFocus = () => {
+    clearTimeout(blurTimer.current);
+    setNoteFocused(true);
+  };
+  const onNoteBlur = () => {
+    clearTimeout(blurTimer.current);
+    blurTimer.current = setTimeout(() => setNoteFocused(false), 250);
+  };
+  const leaveNote = () => {
+    clearTimeout(blurTimer.current);
+    noteRef.current?.blur();
+    setNoteFocused(false);
   };
 
   const selectPay = (id: string) => {
@@ -261,14 +327,19 @@ export default function QuickAddScreen() {
   const chargedCard = mode === "out" && payMode === "credit" ? (cards.find((c) => c.id === selectedCardId) ?? null) : null;
   const needsCard = mode === "out" && payMode === "credit" && !chargedCard;
   const ready = amount > 0 && !!selectedCategory && !needsCard;
+  // Amount entered, nothing to say what it was yet, and the note isn't already
+  // open: the next step is the note, so the button takes you there.
+  const goesToNote = amount > 0 && !selectedCategory && desc.trim() === "" && !noteFocused;
   const ctaLabel =
     amount <= 0
       ? "Enter an amount"
-      : !selectedCategory
-        ? "Pick a category"
-        : needsCard
-          ? "Choose a card"
-          : `Add ${fmtExact(amount)} · ${selectedCategory.name}`;
+      : goesToNote
+        ? "Note ›"
+        : !selectedCategory
+          ? "Pick a category"
+          : needsCard
+            ? "Choose a card"
+            : `Add ${fmtExact(amount)} · ${selectedCategory.name}`;
 
   // Learning is a nice-to-have that happens after the entry is safely saved, so
   // it runs detached and can't turn a successful add into an error (or a
@@ -300,13 +371,18 @@ export default function QuickAddScreen() {
       });
       if (insertError) throw insertError;
 
-      if (desc.trim()) void learn(householdId, desc, selectedCategory.id, selectedPot?.id ?? null, mode);
+      if (desc.trim()) {
+        void learn(householdId, desc, selectedCategory.id, selectedPot?.id ?? null, mode);
+        // Offer this note straight away too — the screen stays open between entries.
+        const entry = { text: desc, type: mode, categoryId: selectedCategory.id, potId: selectedPot?.id ?? null };
+        setHistory((h) => ({ ...h, notes: recordNote(h.notes, entry) }));
+      }
 
       setJustAdded(`Added to ${selectedCategory.name}${chargedCard ? ` · ${chargedCard.name}` : ""}`);
       clearTimeout(toastTimer.current);
       toastTimer.current = setTimeout(() => setJustAdded(null), 1800);
       resetForm();
-      noteRef.current?.blur();
+      leaveNote();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -315,12 +391,15 @@ export default function QuickAddScreen() {
   };
 
   // Not disabled when something's missing: pressing it answers "what's missing?"
-  // by pointing at the field (or, for a card, opening its sheet).
+  // by pointing at the field (or, for a card, opening its sheet) — or, when the
+  // next step is the note, by taking you there.
   const onPressAdd = () => {
     if (ready) return confirm();
-    noteRef.current?.blur();
-    if (amount <= 0) flash("amount");
-    else if (!selectedCategory) flash("category");
+    if (goesToNote) return noteRef.current?.focus();
+    if (amount <= 0) {
+      leaveNote(); // bring the keypad back
+      flash("amount");
+    } else if (!selectedCategory) flash("category");
     else if (needsCard) {
       flash("card");
       setSheet("pay");
@@ -351,6 +430,8 @@ export default function QuickAddScreen() {
           ? "Pot suggested from note"
           : null;
 
+  const noteSuggestions = suggestNotes(desc, history.notes, categories, pots, mode);
+
   const dateLabel = date === todayKey() ? "Today" : date === yesterdayKey() ? "Yesterday" : shortDate(date);
   const payLabel = chargedCard ? chargedCard.name : payMode === "credit" ? "Choose card" : "Cash";
 
@@ -358,7 +439,13 @@ export default function QuickAddScreen() {
     <View className="flex-1">
       <Screen scroll={false} edges={["top", "bottom"]}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-          <View className="flex-1 px-4 pb-4 pt-3">
+          {/* On the web the keyboard covers the page instead of resizing it, so
+              shrink the content by what it covers (less the bottom safe area,
+              which the keyboard already hides) to lift the Add button above it. */}
+          <View
+            className="flex-1 px-4 pb-4 pt-3"
+            style={{ marginBottom: Math.max(0, keyboardInset - insets.bottom) }}
+          >
             <View className="h-9 flex-row items-center">
               <View className="w-8" />
               <View className="flex-1 items-center">
@@ -384,7 +471,7 @@ export default function QuickAddScreen() {
             {error && <Text className="mt-2 text-[12px] text-negative">{error}</Text>}
 
             <Pressable
-              onPress={() => noteRef.current?.blur()}
+              onPress={leaveNote}
               accessibilityLabel="Amount"
               className={`mt-3 items-center rounded-xl border py-2 ${
                 nudge === "amount" ? "border-negative/70" : "border-transparent"
@@ -400,8 +487,9 @@ export default function QuickAddScreen() {
               ref={noteRef}
               value={desc}
               onChangeText={onChangeDesc}
-              onFocus={() => setNoteFocused(true)}
-              onBlur={() => setNoteFocused(false)}
+              onFocus={onNoteFocus}
+              onBlur={onNoteBlur}
+              onSubmitEditing={leaveNote}
               returnKeyType="done"
               autoCapitalize="none"
               placeholder={mode === "out" ? "What was it? lunch, keells, uber…" : "Where from? salary, freelance, gift…"}
@@ -447,9 +535,15 @@ export default function QuickAddScreen() {
               )}
             </View>
 
-            <View className="flex-1" />
+            {/* The free space between the pills and the keypad/Add button: holds the
+                matching previous notes while typing, so they sit over the keyboard. */}
+            {noteSuggestions.length > 0 ? (
+              <NoteSuggestions items={noteSuggestions} onPick={pickNote} />
+            ) : (
+              <View className="flex-1" />
+            )}
 
-            {!noteFocused && <Keypad value={amountText} onChange={setAmountText} onNote={() => noteRef.current?.focus()} />}
+            {!noteFocused && <Keypad value={amountText} onChange={setAmountText} compact />}
 
             <Pressable
               onPress={onPressAdd}
@@ -458,7 +552,11 @@ export default function QuickAddScreen() {
               className={`mt-3 items-center rounded-xl py-3.5 ${ready ? "bg-gold" : "bg-fill"}`}
               style={{ opacity: saving ? 0.7 : 1 }}
             >
-              <Text className={`font-body-semibold text-[13.5px] ${ready ? "text-on-gold" : "text-muted"}`}>
+              <Text
+                className={`font-body-semibold text-[13.5px] ${
+                  ready ? "text-on-gold" : goesToNote ? "text-gold" : "text-muted"
+                }`}
+              >
                 {saving ? "Adding…" : ctaLabel}
               </Text>
             </Pressable>
