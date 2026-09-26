@@ -3,7 +3,8 @@ import Svg, { Path } from "react-native-svg";
 import { useColorScheme } from "nativewind";
 import { darkTokens, lightTokens } from "@/lib/theme/tokens";
 
-// One of the small pills under Quick Add's category row (Date, Pot, Paid
+// A dropdown pill: the small chips under the category row on Quick Add and Edit
+// (Date, Pot, Paid with) and the filter row on Activity (Category, Pot, Paid
 // with). It doubles as the summary of the current value and the button that
 // opens its sheet. `active` = not the default (gold); `suggested` adds a ✦
 // when the value came from the note rather than a tap; `invalid` flags a pill

@@ -5,8 +5,8 @@ import { applyKey } from "@/lib/amount";
 // ("", "12", "12.", "12.50") — applyKey (src/lib/amount.ts) owns the rules:
 // one decimal point, up to 2 decimals, up to 9 whole digits.
 //
-// `compact` (Quick Add) trades the roomy 60pt keys for 46pt ones so the whole
-// entry screen fits a small phone without scrolling.
+// `compact` (Quick Add and Edit) trades the roomy 60pt keys for 46pt ones so the
+// whole entry screen fits a small phone without scrolling.
 const ROWS = [
   ["1", "2", "3"],
   ["4", "5", "6"],

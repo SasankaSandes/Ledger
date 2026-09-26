@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { DetailPill } from "@/components/quickadd/DetailPill";
+import { ChoiceSheet } from "@/components/quickadd/QuickAddSheets";
 import { ActionSheet } from "@/components/ui/ActionSheet";
 import { MonthSwitcher } from "@/components/ui/MonthSwitcher";
 import { Screen } from "@/components/ui/Screen";
@@ -35,6 +37,11 @@ type TypeFilter = "all" | "in" | "out";
 // "Paid with" — cash spend, or anything charged to / paid toward a card.
 // Picking one specific card (cardFilter) overrides this.
 type PayFilter = "all" | "cash" | "credit";
+type FilterSheetKind = "category" | "pot" | "pay";
+
+// Every filter sheet leads with the same "All" option, which clears the filter.
+const ALL = "all";
+const PAY_FILTERS: string[] = [ALL, "cash", "credit"];
 
 // Replaces the old Money tab (Savings/Debts/Annual) — those folded into
 // plain Cash In/Cash Out categories, and this flat, filterable ledger is
@@ -45,6 +52,10 @@ type PayFilter = "all" | "cash" | "credit";
 // payment shows in the ledger as its own row. Everything here — the list and
 // its totals — is scoped to the month selected in the ‹ › switcher, which is
 // shared with Home (see SelectedMonthProvider).
+//
+// Under the All / Cash In / Cash Out tabs, the Category, Pot and Paid-with
+// filters are one row of dropdown chips (the same DetailPill as Quick Add's);
+// each opens a bottom sheet of options and, once set, shows its value in gold.
 export default function ActivityScreen() {
   const { householdId, nicknames, memberCount } = useHousehold();
   const { session } = useAuth();
@@ -67,6 +78,7 @@ export default function ActivityScreen() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [loading, setLoading] = useState(true);
   const [menuFor, setMenuFor] = useState<Transaction | null>(null);
+  const [filterSheet, setFilterSheet] = useState<FilterSheetKind | null>(null);
 
   useEffect(() => {
     if (typeof params.category === "string") setCategoryFilter(params.category);
@@ -198,6 +210,26 @@ export default function ActivityScreen() {
     confirmAction("Delete this transaction?", "This can't be undone.", "Delete", () => remove(transaction.id));
   };
 
+  // What the Paid-with chip shows once it's set: one card by name, or the
+  // Cash / Credit group. Null means no paid-with filter.
+  const payLabel = activeCard
+    ? activeCard.name
+    : payFilter === "cash"
+      ? "Cash"
+      : payFilter === "credit"
+        ? "Credit"
+        : null;
+
+  const pickPay = (id: string) => {
+    if (PAY_FILTERS.includes(id)) {
+      setPayFilter(id as PayFilter);
+      setCardFilter(null);
+    } else {
+      setCardFilter(id);
+      setPayFilter("all");
+    }
+  };
+
   const heading = activePot
     ? activePot.name
     : activeCategory
@@ -236,100 +268,19 @@ export default function ActivityScreen() {
           ))}
         </View>
 
-        <Text className="mb-1.5 mt-3 text-[10.5px] uppercase tracking-wider text-muted">Category</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View className="flex-row gap-1.5 pr-4">
-            <Pressable
-              onPress={() => setCategoryFilter(null)}
-              className={`rounded-full border px-2.5 py-1 ${!categoryFilter ? "border-gold/40 bg-gold/[0.1]" : "border-line/15"}`}
-            >
-              <Text className={`text-[11px] ${!categoryFilter ? "text-gold" : "text-muted"}`}>All</Text>
-            </Pressable>
-            {categories.map((c) => (
-              <Pressable
-                key={c.id}
-                onPress={() => setCategoryFilter(c.id)}
-                className={`rounded-full border px-2.5 py-1 ${
-                  categoryFilter === c.id ? "border-gold/40 bg-gold/[0.1]" : "border-line/15"
-                } ${c.archivedAt ? "opacity-50" : ""}`}
-              >
-                <Text className={`text-[11px] ${categoryFilter === c.id ? "text-gold" : "text-muted"}`}>
-                  {c.name}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </ScrollView>
-
-        {pots.length > 0 && (
-          <>
-            <Text className="mb-1.5 mt-3 text-[10.5px] uppercase tracking-wider text-muted">Pot</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View className="flex-row gap-1.5 pr-4">
-                <Pressable
-                  onPress={() => setPotFilter(null)}
-                  className={`rounded-full border px-2.5 py-1 ${!potFilter ? "border-gold/40 bg-gold/[0.1]" : "border-line/15"}`}
-                >
-                  <Text className={`text-[11px] ${!potFilter ? "text-gold" : "text-muted"}`}>All</Text>
-                </Pressable>
-                {pots.map((p) => (
-                  <Pressable
-                    key={p.id}
-                    onPress={() => setPotFilter(p.id)}
-                    className={`rounded-full border px-2.5 py-1 ${
-                      potFilter === p.id ? "border-gold/40 bg-gold/[0.1]" : "border-line/15"
-                    } ${p.archivedAt ? "opacity-50" : ""}`}
-                  >
-                    <Text className={`text-[11px] ${potFilter === p.id ? "text-gold" : "text-muted"}`}>
-                      {p.name}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </ScrollView>
-          </>
-        )}
-
-        {cards.length > 0 && (
-          <>
-            <Text className="mb-1.5 mt-3 text-[10.5px] uppercase tracking-wider text-muted">Paid with</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View className="flex-row gap-1.5 pr-4">
-                {(["all", "cash", "credit"] as PayFilter[]).map((f) => {
-                  const active = !cardFilter && payFilter === f;
-                  return (
-                    <Pressable
-                      key={f}
-                      onPress={() => {
-                        setPayFilter(f);
-                        setCardFilter(null);
-                      }}
-                      className={`rounded-full border px-2.5 py-1 ${active ? "border-gold/40 bg-gold/[0.1]" : "border-line/15"}`}
-                    >
-                      <Text className={`text-[11px] ${active ? "text-gold" : "text-muted"}`}>
-                        {f === "all" ? "All" : f === "cash" ? "Cash" : "Credit"}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-                {cards.map((c) => (
-                  <Pressable
-                    key={c.id}
-                    onPress={() => {
-                      setCardFilter(c.id);
-                      setPayFilter("all");
-                    }}
-                    className={`rounded-full border px-2.5 py-1 ${
-                      cardFilter === c.id ? "border-gold/40 bg-gold/[0.1]" : "border-line/15"
-                    } ${c.archivedAt ? "opacity-50" : ""}`}
-                  >
-                    <Text className={`text-[11px] ${cardFilter === c.id ? "text-gold" : "text-muted"}`}>{c.name}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </ScrollView>
-          </>
-        )}
+        <View className="mt-3 flex-row gap-1.5">
+          <DetailPill
+            label={activeCategory?.name ?? "Category"}
+            active={!!activeCategory}
+            onPress={() => setFilterSheet("category")}
+          />
+          {pots.length > 0 && (
+            <DetailPill label={activePot?.name ?? "Pot"} active={!!activePot} onPress={() => setFilterSheet("pot")} />
+          )}
+          {cards.length > 0 && (
+            <DetailPill label={payLabel ?? "Paid with"} active={payLabel !== null} onPress={() => setFilterSheet("pay")} />
+          )}
+        </View>
 
         <View className="mt-4 flex-row items-center justify-between rounded-2xl border border-line/10 bg-card px-4 py-3.5">
           <View>
@@ -381,6 +332,42 @@ export default function ActivityScreen() {
           })}
         </View>
       </View>
+
+      <ChoiceSheet
+        modal
+        visible={filterSheet === "category"}
+        title="Category"
+        options={[
+          { id: ALL, label: "All" },
+          ...categories.map((c) => ({ id: c.id, label: c.name, dimmed: !!c.archivedAt })),
+        ]}
+        selectedId={categoryFilter ?? ALL}
+        onSelect={(id) => setCategoryFilter(id === ALL ? null : id)}
+        onClose={() => setFilterSheet(null)}
+      />
+      <ChoiceSheet
+        modal
+        visible={filterSheet === "pot"}
+        title="Pot"
+        options={[{ id: ALL, label: "All" }, ...pots.map((p) => ({ id: p.id, label: p.name, dimmed: !!p.archivedAt }))]}
+        selectedId={potFilter ?? ALL}
+        onSelect={(id) => setPotFilter(id === ALL ? null : id)}
+        onClose={() => setFilterSheet(null)}
+      />
+      <ChoiceSheet
+        modal
+        visible={filterSheet === "pay"}
+        title="Paid with"
+        options={[
+          { id: ALL, label: "All" },
+          { id: "cash", label: "Cash" },
+          { id: "credit", label: "Credit" },
+          ...cards.map((c) => ({ id: c.id, label: c.name, dimmed: !!c.archivedAt })),
+        ]}
+        selectedId={cardFilter ?? payFilter}
+        onSelect={pickPay}
+        onClose={() => setFilterSheet(null)}
+      />
 
       <ActionSheet
         visible={menuFor !== null}

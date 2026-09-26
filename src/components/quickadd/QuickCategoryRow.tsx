@@ -55,7 +55,13 @@ export function QuickCategoryRow({
             key={c.id}
             onPress={() => onSelect(c.id)}
             onLayout={(e) => {
-              chipX.current[c.id] = e.nativeEvent.layout.x;
+              const { x } = e.nativeEvent.layout;
+              const firstLayout = chipX.current[c.id] === undefined;
+              chipX.current[c.id] = x;
+              // A chip that is already selected when it first lays out (Edit opens
+              // on the saved category; a just-created one) missed the effect
+              // above, which runs before its position is known.
+              if (firstLayout && selected) scrollRef.current?.scrollTo({ x: Math.max(0, x - 16), animated: false });
             }}
             className={`h-9 flex-row items-center justify-center rounded-full border px-3.5 ${
               selected ? "border-gold/50 bg-gold/[0.12]" : "border-line/15"
