@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { router, useFocusEffect } from "expo-router";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { TodaySummaryCard } from "@/components/home/TodaySummaryCard";
 import { CoachStrip } from "@/components/home/CoachStrip";
@@ -170,12 +170,11 @@ export default function HomeScreen() {
             onNewer={goNewer}
           />
         </View>
-        <View className="mt-1 flex-row items-center justify-end gap-3">
-          {!isOpen && <Text className="text-[10.5px] text-muted2">Viewing a past month — read only</Text>}
-          <Pressable onPress={() => router.push("/activity")} hitSlop={6}>
-            <Text className="text-[10.5px] text-muted2 underline">Activity ›</Text>
-          </Pressable>
-        </View>
+        {!isOpen && (
+          <View className="mt-1 flex-row items-center justify-end">
+            <Text className="text-[10.5px] text-muted2">Viewing a past month — read only</Text>
+          </View>
+        )}
 
         <View className="mt-3">
           <TodaySummaryCard
